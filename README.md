@@ -1,7 +1,7 @@
 # Agreement Audit
 
-A Claude Code skill that audits a folder of legal agreements for the clauses you care about — and does
-it in a way a lawyer can trust. It reads every contract, pulls the answer for each clause **with a
+A Claude Code skill that audits a folder of legal agreements for the clauses you care about, in a way a
+lawyer can trust. It reads every contract, pulls the answer for each clause **with a
 verbatim quote**, has independent agents check that the quote actually supports the answer, and then a
 deterministic gate **drops any quote that isn't word-for-word in the source.** You get the findings in
 chat, a Word report for the team, and a review queue of anything that needs a human.
@@ -70,9 +70,8 @@ Open Claude Code in this folder and run `/agreement-audit` — the project skill
 > The grounding gate and report run as real local code; the skill bundles its scripts and self-locates
 > them via `${CLAUDE_SKILL_DIR}`, so it works installed globally or in-place. The multi-agent step needs
 > the **Workflow tool** (Claude Code v2.1.154+, a paid plan; on Pro, enable *Dynamic workflows* in
-> `/config`). Cowork's support for the Workflow tool isn't documented yet — so for the single-document
-> case the skill **falls back to running inline without it**, which keeps the common case working there
-> regardless.
+> `/config`). Cowork's support for the Workflow tool isn't documented yet, so for the single-document
+> case the skill **falls back to running inline without it**, which keeps the common case working there.
 
 ## Usage
 
@@ -88,7 +87,7 @@ Open Claude Code in this folder and run `/agreement-audit` — the project skill
 6. You can then **ask follow-up questions** about the results (answered from the grounded findings).
 
 **Just describe what you want, in plain English** — name a path (a folder, a single file, *anywhere on
-disk* — including absolute or `~/...` paths outside this repo) and the clause(s) you care about:
+disk*, including absolute or `~/...` paths outside this repo) and the clause(s) you care about:
 
 ```
 /agreement-audit — read the agreement in ~/Downloads/acme-rights.pdf and explain the non-compete clause
@@ -142,7 +141,7 @@ what about assignment?        ← not in the run → it offers to re-audit that 
 
 ## What you get
 
-- **In chat:** the coverage receipt, the doc × clause grid, and the full review queue — the analysis
+- **In chat:** the coverage receipt, the doc × clause grid, and the full review queue: the analysis
   itself, not just a pointer to a file.
 - **A Word report (`.docx`) saved where you choose** (next to the agreement, your Desktop, or the repo):
   coverage receipt, a color-coded grid, a per-agreement section with the **verbatim quote under each
