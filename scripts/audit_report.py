@@ -287,7 +287,7 @@ def write_docx(path: str, R: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--findings", required=True)
-    ap.add_argument("--md", default=".audit", help="dir holding the per-doc <doc_id>.md sources")
+    ap.add_argument("--md", default=".audit/sources", help="dir holding the per-doc <doc_id>.md sources")
     ap.add_argument("--out", help="Markdown report path")
     ap.add_argument("--docx", help="Word report path (for the legal team)")
     args = ap.parse_args()

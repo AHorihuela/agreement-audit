@@ -62,12 +62,14 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
    (`.audit/`). Build the path from their choice with a descriptive filename, e.g.
    `<agreement-or-folder-name> — clause audit.docx`. Then (the misquotation guarantee + receipt — code,
    not an agent):
-   `Bash: python3 scripts/audit_report.py --findings .audit/findings.json --md .audit --out .audit/report.md --docx "<chosen path>"`
+   `Bash: python3 scripts/audit_report.py --findings .audit/findings.json --md .audit/sources --out .audit/report.md --docx "<chosen path>"`
    It re-grounds **every** quote, **drops** any not verbatim-present, and writes the **Word deliverable**
    (coverage receipt, color-coded grid, per-document detail with the verbatim quotes, a review queue with
    reviewer sign-off space) to the chosen location — which may be **anywhere on disk** (the report holds
    the contract's text, so keeping it next to the source or on the Desktop, not in this repo, is fine and
-   often preferable). A Markdown record also goes to `.audit/`. Tell the user the exact saved path.
+   often preferable). Build the path **inside an existing directory** (the agreement's folder, `~/Desktop`)
+   — don't invent a deep new tree from a typo. A Markdown record also goes to `.audit/`. **Tell the user
+   the exact saved path** (and that re-running overwrites it).
 
 5. **Report the findings in chat.** The chat response must contain the **actual analysis** — the
    grounded answer(s), the verbatim quotes, and the review queue — **not merely a pointer to the saved

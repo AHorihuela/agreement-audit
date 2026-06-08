@@ -2,6 +2,9 @@
 agreements/*
 !agreements/.gitkeep
 .audit/
+# generated reports (gitignore can't do inline comments — keep patterns on their own lines)
+*.docx
+*clause audit*.md
 
 # Python
 __pycache__/

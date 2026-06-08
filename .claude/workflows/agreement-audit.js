@@ -11,8 +11,9 @@ export const meta = {
 // Scope (docs + clauses) is resolved by audit_prep from .audit/audit_config.json (written by the
 // skill) — NOT from the workflow `args` global, which is not reliably plumbed to a saved/scriptPath
 // workflow. The workflow fans out over whatever Prepare returns.
-const MD_DIR = ".audit"
-const CONFIG = `${MD_DIR}/audit_config.json`
+const WORK = ".audit"
+const CONFIG = `${WORK}/audit_config.json`
+const SOURCES = `${WORK}/sources`        // audit_prep writes per-doc text here (wiped each run)
 
 const PREP_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -44,8 +45,8 @@ const VERDICT_SCHEMA = {
 phase("Prepare")
 const prep = await agent(
   `Parse the agreements + resolve the audit scope. Run EXACTLY this (local parse — no API call):\n` +
-  `  python3 scripts/audit_prep.py --config ${JSON.stringify(CONFIG)} --out ${JSON.stringify(MD_DIR)}\n\n` +
-  `It writes one <doc_id>.md per agreement under ${MD_DIR}/ and prints a JSON object ` +
+  `  python3 scripts/audit_prep.py --config ${JSON.stringify(CONFIG)} --out ${JSON.stringify(WORK)}\n\n` +
+  `It writes one <doc_id>.md per agreement under ${SOURCES}/ and prints a JSON object ` +
   `{"doc_ids":[...],"skipped":[...],"fields":[{key,label,question},...]}. Return that object exactly.`,
   { label: "prepare", phase: "Prepare", schema: PREP_SCHEMA })
 const docIds = (prep && prep.doc_ids) || []
@@ -58,7 +59,7 @@ for (const d of docIds) for (const f of FIELDS) tasks.push({ doc: d, field: f })
 const extracted = (await parallel(tasks.map((t) => () =>
   agent(
     `You are auditing ONE clause in ONE agreement. Read the full source:\n` +
-    `  cat "${MD_DIR}/${t.doc}.md"\n\n` +
+    `  cat "${SOURCES}/${t.doc}.md"\n\n` +
     `QUESTION: ${t.field.question}\n\n` +
     `Answer ONLY from this document. Return:\n` +
     `- found: false if the clause is genuinely ABSENT — do NOT guess or infer.\n` +
@@ -84,7 +85,7 @@ const verified = (await parallel(found.map((x) => () =>
   parallel(LENSES.map((lens, i) => () =>
     agent(
       `Does the QUOTE support the ANSWER to the QUESTION, read in its source context?\n\n` +
-      `Read the source: cat "${MD_DIR}/${x.doc}.md"\n\n` +
+      `Read the source: cat "${SOURCES}/${x.doc}.md"\n\n` +
       `QUESTION: ${x.question}\nANSWER: ${x.value}\nQUOTE: «${x.quote}»\n\n` +
       `${lens}\nReturn supports (does the quote back the answer's specific assertion?) + a one-sentence reason.`,
       { label: `verify:${x.doc}:${x.field}:${i}`, phase: "Verify", schema: VERDICT_SCHEMA })
