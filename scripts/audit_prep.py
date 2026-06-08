@@ -56,15 +56,16 @@ def extract_text(path: Path) -> str:
 
 
 def select_files(docs_dir, files) -> list:
-    """Resolve the input files. This is what lets the audit run on ONE agreement, a named subset, or a
-    whole folder:
+    """Resolve the input files. Paths may be ANYWHERE on disk — absolute, `~/...`, or relative to the
+    current directory; the documents do NOT have to live inside this repo. This is what lets the audit
+    run on ONE agreement, a named subset, or a whole folder:
       - an explicit `files` list (each a path) -> exactly those;
       - `docs_dir` pointing at a single file -> just that file;
       - `docs_dir` pointing at a directory -> every file in it.
     """
     if files:
-        return [Path(p) for p in files]
-    p = Path(docs_dir)
+        return [Path(p).expanduser() for p in files]
+    p = Path(docs_dir).expanduser()       # expand ~ so external/home paths resolve
     if p.is_dir():
         return [c for c in sorted(p.iterdir()) if c.is_file()]
     if p.is_file() or p.suffix:           # a real file, or a file-like path (typo) -> surface "not found"
@@ -89,7 +90,7 @@ def main() -> int:
     candidates = select_files(docs_dir, files_cfg)
     # An explicitly named file / list means the user picked these on purpose — surface a bad pick as a
     # reasoned skip rather than silently ignoring it (as we do for stray files in a scanned directory).
-    dd = Path(docs_dir)
+    dd = Path(docs_dir).expanduser()
     explicit = bool(files_cfg) or dd.is_file() or (bool(dd.suffix) and not dd.is_dir())
 
     out = Path(args.out)

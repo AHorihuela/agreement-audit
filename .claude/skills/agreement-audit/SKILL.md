@@ -1,6 +1,6 @@
 ---
 name: agreement-audit
-description: Audit a folder of legal agreements — extract a set of clauses across every contract with verbatim-grounded citations, adversarial cross-checks, a coverage receipt proving every document was examined, and a human-review queue. Returns the findings in chat AND a Word report, and answers follow-up questions about the results. Runs on your Claude Code subscription (the agents) + local Python (parsing + the deterministic grounding gate). Token-heavy multi-agent run — invoke manually.
+description: Audit legal agreements — a whole folder, a single agreement, or specific files anywhere on disk — for the clauses you ask about in natural language (e.g. "explain the non-compete in ~/Downloads/acme.pdf"), with verbatim-grounded citations, adversarial cross-checks, a coverage receipt proving every document was examined, and a human-review queue. Returns the findings in chat AND a Word report, and answers follow-up questions. Runs on your Claude Code subscription (the agents) + local Python (parsing + the deterministic grounding gate). Token-heavy multi-agent run — invoke manually.
 allowed-tools: Bash, Workflow, Write, Read
 disable-model-invocation: true
 ---
@@ -23,6 +23,9 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
    - **Where** — the path they name (phrases like "in <path>", "the agreement at <path>", "the
      contracts in <folder>"). A folder → `docs_dir`; a single file → `docs_dir` set to that file;
      several named files → `files: [...]`. If they name no path, default `docs_dir` to `agreements`.
+     The path can be **anywhere on disk** — an absolute path (`/Users/you/Downloads/acme.pdf`), a
+     `~/...` home path, or a path relative to the current folder. The documents do **not** need to live
+     inside this repo; the audit reads them in place and writes only its working copies to `.audit/`.
    - **What** — the clause(s) / question(s) they ask about. Build **one `fields` entry per question**:
      `key` = a short slug (`non_compete`), `label` = a short human label (`Non-compete`), `question` =
      the user's ask rewritten as a clear, self-contained question. Keep their intent: a factual ask
@@ -53,16 +56,28 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
 
 3. **Persist the result:** `Write` the workflow's returned object to `.audit/findings.json`.
 
-4. **Run the deterministic consolidation** (the misquotation guarantee + the receipt — code, not an
-   agent):
-   `Bash: python3 scripts/audit_report.py --findings .audit/findings.json --md .audit --out .audit/report.md --docx .audit/report.docx`
-   It re-grounds **every** quote, **drops** any not verbatim-present, and writes a Markdown record plus
-   the **Word deliverable** (`.audit/report.docx`): coverage receipt, color-coded grid, per-document
-   detail with the verbatim quotes, and a review queue with reviewer sign-off space.
+4. **Ask where to save the Word report, then run the deterministic consolidation.** First ask the user
+   where the report should go (use `AskUserQuestion`): **(a) next to the agreement** (the referenced
+   file's folder, or the docs folder), **(b) the Desktop** (`~/Desktop`), or **(c) here in the repo**
+   (`.audit/`). Build the path from their choice with a descriptive filename, e.g.
+   `<agreement-or-folder-name> — clause audit.docx`. Then (the misquotation guarantee + receipt — code,
+   not an agent):
+   `Bash: python3 scripts/audit_report.py --findings .audit/findings.json --md .audit --out .audit/report.md --docx "<chosen path>"`
+   It re-grounds **every** quote, **drops** any not verbatim-present, and writes the **Word deliverable**
+   (coverage receipt, color-coded grid, per-document detail with the verbatim quotes, a review queue with
+   reviewer sign-off space) to the chosen location — which may be **anywhere on disk** (the report holds
+   the contract's text, so keeping it next to the source or on the Desktop, not in this repo, is fine and
+   often preferable). A Markdown record also goes to `.audit/`. Tell the user the exact saved path.
 
-5. **Report the findings in chat** (do not just point at the file): show the **coverage receipt**
-   (N examined / grounded / review / dropped / not found), the **doc × clause grid** as a readable
-   Markdown table (status emoji + short value per cell), and the **review queue** in full (each flagged
+5. **Report the findings in chat.** The chat response must contain the **actual analysis** — the
+   grounded answer(s), the verbatim quotes, and the review queue — **not merely a pointer to the saved
+   file**. (The file and the chat carry the same analysis; the file is for keeping/sharing.) If the
+   request was a **single targeted question** (one clause, one or a few documents), **lead with the
+   direct grounded answer** —
+   the explanation, the **verbatim quote**, and the verify status — in prose; the grid + Word report are
+   still produced but secondary. For a **portfolio audit** (many docs/clauses), show the **coverage
+   receipt** (N examined / grounded / review / dropped / not found), the **doc × clause grid** as a
+   readable Markdown table (status emoji + short value per cell), and the **review queue** in full (each flagged
    item with the clause, the extracted answer, the verbatim quote, and *why* it was flagged — review
    reasons distinguish *refuted* / *not verified* / *source not loaded* / *low confidence*). Call out
    any documents that **could not be parsed** (the skipped list, with reasons). If **zero** documents

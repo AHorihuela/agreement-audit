@@ -62,7 +62,9 @@ const extracted = (await parallel(tasks.map((t) => () =>
     `QUESTION: ${t.field.question}\n\n` +
     `Answer ONLY from this document. Return:\n` +
     `- found: false if the clause is genuinely ABSENT — do NOT guess or infer.\n` +
-    `- value: a concise answer (e.g. the state; "exclusive"/"non-exclusive"; "60 days"; "yes"/"no").\n` +
+    `- value: a direct answer to the QUESTION — concise for a factual ask (a state, a duration, ` +
+    `"exclusive"/"non-exclusive", "yes"/"no"); a brief grounded explanation (1-3 sentences) if the ` +
+    `question asks you to explain or describe. Either way it must be supported by the quote.\n` +
     `- quote: the SINGLE most on-point passage, copied VERBATIM, character-for-character, from the ` +
     `source text — do NOT paraphrase, normalize, or fix typos/linebreaks (it will be re-checked against ` +
     `the source byte-for-byte). Cite one passage, not several.\n` +

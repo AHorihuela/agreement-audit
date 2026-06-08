@@ -33,3 +33,11 @@ def test_missing_directory_yields_nothing(tmp_path):
 def test_missing_file_like_path_is_surfaced(tmp_path):
     missing = tmp_path / "ghost.pdf"
     assert audit_prep.select_files(str(missing), None) == [missing]             # file typo -> "file not found"
+
+
+def test_tilde_paths_expand_for_external_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    f = tmp_path / "homedoc.md"
+    f.write_text("x", encoding="utf-8")
+    assert audit_prep.select_files("~/homedoc.md", None) == [f]                 # ~ expands -> resolves
+    assert audit_prep.select_files(None, ["~/homedoc.md"]) == [f]               # in the files list too

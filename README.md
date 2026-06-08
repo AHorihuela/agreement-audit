@@ -81,6 +81,18 @@ Then open Claude Code in this folder.
    queue — and writes a **Word report** to `.audit/report.docx`.
 6. You can then **ask follow-up questions** about the results (answered from the grounded findings).
 
+**Just describe what you want, in plain English** — name a path (a folder, a single file, *anywhere on
+disk* — including absolute or `~/...` paths outside this repo) and the clause(s) you care about:
+
+```
+/agreement-audit — read the agreement in ~/Downloads/acme-rights.pdf and explain the non-compete clause
+/agreement-audit — across the contracts in ~/deals/, which have an MFN and what's the governing law?
+/agreement-audit — check the termination-for-convenience terms in /Volumes/Legal/2024/*.docx
+```
+
+It figures out the path and the clauses from your sentence. If you name no clause, it runs the default
+set (governing law, exclusivity, term, termination notice, MFN).
+
 **Try it first** on the included synthetic sample (safe — not a real contract):
 
 ```

@@ -296,15 +296,18 @@ def main() -> int:
 
     data = json.loads(Path(args.findings).read_text(encoding="utf-8"))
     R = classify(data, args.md)
-    if args.out:
-        write_md(args.out, R)
-    if args.docx:
-        write_docx(args.docx, R)
+    # Output may go anywhere the user chose (next to the agreement, ~/Desktop, …) — expand ~.
+    out = str(Path(args.out).expanduser()) if args.out else None
+    docx = str(Path(args.docx).expanduser()) if args.docx else None
+    if out:
+        write_md(out, R)
+    if docx:
+        write_docx(docx, R)
     c, n_cells = R["counts"], len(R["doc_ids"]) * len(R["fields"])
     print(f"{len(R['doc_ids'])} docs · {n_cells} checks · {c['answer']} grounded · {c['review']} review · "
           f"{c['ungrounded'] + c['no_source']} dropped · {c['not_found']} not found"
           + (f" · {R['malformed']} malformed ignored" if R["malformed"] else "")
-          + (f"  -> {args.out}" if args.out else "") + (f"  -> {args.docx}" if args.docx else ""))
+          + (f"  -> {out}" if out else "") + (f"  -> {docx}" if docx else ""))
     return 0
 
 
