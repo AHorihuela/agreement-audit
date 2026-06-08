@@ -1,6 +1,6 @@
 ---
 name: agreement-audit
-description: Audit legal agreements — a whole folder, a single agreement, or specific files anywhere on disk — for the clauses you ask about in natural language (e.g. "explain the non-compete in ~/Downloads/acme.pdf"), with verbatim-grounded citations, adversarial cross-checks, a coverage receipt proving every document was examined, and a human-review queue. Returns the findings in chat AND a Word report, and answers follow-up questions. Runs on your Claude Code subscription (the agents) + local Python (parsing + the deterministic grounding gate). Token-heavy multi-agent run — invoke manually.
+description: Audit legal agreements — a whole folder, a single agreement, or specific files anywhere on disk — for the clauses you ask about in natural language (e.g. "explain the non-compete in ~/Downloads/acme.pdf"), with verbatim-grounded citations, adversarial cross-checks, a coverage receipt proving every document was examined, and a human-review queue. Returns the findings in chat AND a Word report, and answers follow-up questions. The agents run on your Claude Code subscription; parsing and the deterministic grounding gate are local Python. Invoke manually.
 allowed-tools: Bash, Workflow, Write, Read
 disable-model-invocation: true
 ---
@@ -8,10 +8,10 @@ disable-model-invocation: true
 # Agreement clause audit
 
 Run a grounded, multi-agent audit over a folder of agreements, then **report the findings in chat,
-write a Word report, and stay available for follow-up questions.** The expensive part (extraction +
-verification) runs as Claude Code subagents → the user's subscription. Parsing and the **deterministic
-verbatim-grounding gate** run as local Python, so the one hard guarantee — every quote shown is
-actually in the source — is decided by code, never by an agent's say-so.
+write a Word report, and stay available for follow-up questions.** Extraction + verification run as
+Claude Code subagents; parsing and the **deterministic verbatim-grounding gate** run as local Python,
+so the one hard guarantee — every quote shown is actually in the source — is decided by code, never by
+an agent's say-so.
 
 ## Steps
 
@@ -43,9 +43,8 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
                 "question": "Explain the nature of the non-compete clause."}]}
    ```
 
-   **Cost guard:** ~1 extract + 2 verify agents per (doc × clause). One agreement × one clause is tiny;
-   a large corpus (e.g. 25 docs × 5 clauses ≈ 280 agents / millions of subscription tokens, ~10+ min) is
-   not — for a big folder, **confirm with the user before auditing the whole corpus**, or suggest a sample.
+   **Scope:** for a large folder, **confirm the scope with the user (or start with a sample)** before
+   auditing the whole corpus, so the run matches what they actually want.
 
 2. **Parse the documents (local, no API).** Run the parser yourself — it self-locates via the skill
    directory, so this works from any folder, installed per-project or globally:

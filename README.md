@@ -28,14 +28,14 @@ agreements/ ──▶ parse (local)  ──▶  extract per (doc × clause)  ─
    .md/.txt                                                         clean only if both agree
 ```
 
-1. **Parse** every agreement to text locally (`python-docx`, PyMuPDF) — no upload, no API cost.
+1. **Parse** every agreement to text locally (`python-docx`, PyMuPDF) — no upload, no API.
 2. **Extract** one clause per document with a dedicated agent that must return a *verbatim* quote (or honestly say "not found").
 3. **Verify** each finding with two agents reading opposite priors; a finding is "clean" only if both agree the quote supports the answer — any dissent goes to the review queue.
 4. **Ground** every quote in code against the source bytes; a quote that isn't present verbatim is dropped, never shown.
 5. **Report** the results in chat and as a Word document, then answer follow-up questions.
 
-The extraction and verification run on your **Claude Code subscription**. Parsing and the grounding
-gate are local Python — free, and the part that gives the hard guarantee.
+Extraction and verification run as Claude Code subagents (on your subscription); parsing and the
+grounding gate are local Python — the part that gives the hard guarantee.
 
 ## Installation
 
@@ -78,13 +78,13 @@ Open Claude Code in this folder and run `/agreement-audit` — the project skill
 
 **What happens when you run `/agreement-audit`:**
 
-1. It confirms the **scope** — which folder of contracts and which clauses (defaults: governing law,
-   exclusivity, term, termination notice, MFN). On a big corpus it warns you and suggests a sample first.
+1. It works out the **scope** — which documents and which clauses (defaults: governing law,
+   exclusivity, term, termination notice, MFN). For a big folder it confirms scope (or suggests a sample) first.
 2. It **reads every contract** and, for each clause, has one agent pull the answer with a *verbatim quote*.
 3. **Two more agents** check each quote actually supports the answer; disagreement → the review queue.
 4. A deterministic gate **re-checks every quote in the source** and drops any that isn't word-for-word.
 5. It **shows you the results in chat** — a coverage receipt, the doc × clause grid, and the review
-   queue — and writes a **Word report** to `.audit/report.docx`.
+   queue — and writes a **Word report**, asking where to save it (next to the agreement, your Desktop, or here).
 6. You can then **ask follow-up questions** about the results (answered from the grounded findings).
 
 **Just describe what you want, in plain English** — name a path (a folder, a single file, *anywhere on
@@ -112,8 +112,8 @@ Then put your own contracts in `agreements/` (`.docx`, `.pdf`, `.md`, `.txt`) an
 ```
 
 Audits every contract in `agreements/` for the default clauses (governing law, exclusivity, term,
-termination notice, MFN). **Start small** — point it at a handful of docs first; a large corpus is a
-long, token-heavy run (it will tell you and ask before doing the whole set).
+termination notice, MFN). **Start small** — point it at a handful of docs first; for a large corpus it
+confirms scope before auditing the whole set.
 
 **Audit a single agreement** (not just a folder):
 
@@ -134,19 +134,21 @@ long, token-heavy run (it will tell you and ask before doing the whole set).
 **Ask follow-up questions after the run** (answered from the grounded findings, with the verbatim quotes):
 
 ```
-which deals have an MFN clause?
-show me the termination language for the Blues amendment
-why was the Cavaliers exclusivity flagged for review?
+which agreements have an MFN clause?
+show me the termination language for one of them
+why was a clause flagged for review?
 what about assignment?        ← not in the run → it offers to re-audit that clause
 ```
 
 ## What you get
 
-- **In chat:** the coverage receipt, the doc × clause grid, and the full review queue.
-- **`/.audit/report.docx`** — a Word report for the team: coverage receipt, a color-coded grid, a
-  per-agreement section with the **verbatim quote under each clause** (so a reviewer can verify it and
-  add Word comments), and a **"Needs human review"** queue with reviewer-decision / notes sign-off space.
-- **`/.audit/report.md`** — the same content as Markdown, for diffs/records.
+- **In chat:** the coverage receipt, the doc × clause grid, and the full review queue — the analysis
+  itself, not just a pointer to a file.
+- **A Word report (`.docx`) saved where you choose** (next to the agreement, your Desktop, or the repo):
+  coverage receipt, a color-coded grid, a per-agreement section with the **verbatim quote under each
+  clause** (so a reviewer can verify it and add Word comments), and a **"Needs human review"** queue
+  with reviewer-decision / notes sign-off space.
+- **`.audit/report.md`** — the same content as Markdown, for records.
 
 | Mark | Meaning |
 |------|---------|
@@ -155,13 +157,13 @@ what about assignment?        ← not in the run → it offers to re-audit that 
 | ⛔ | Dropped — the cited quote was **not** found in the source and was removed |
 | — | Not found — the clause is genuinely absent from this agreement |
 
-## Cost & privacy
+## Scope & privacy
 
-- **Roughly 1 extract + 2 verify agents per (document × clause)**, billed to your Claude Code
-  subscription. A full corpus of large contracts is a multi-million-token run — scope to a sample first.
-- **Your contracts never get committed.** `agreements/` and `.audit/` (parsed text + the report) are
-  gitignored. Confirm your organization's data-handling policy before running any real agreement
-  through a model.
+- **Start with a sample.** A whole-corpus audit runs many agents — point it at a handful of documents
+  first, or let it confirm scope before doing everything.
+- **Your contracts never get committed.** `agreements/`, `.audit/` (parsed text), and generated reports
+  (`*.docx`) are gitignored. Confirm your organization's data-handling policy before running any real
+  agreement through a model.
 
 ## License
 
