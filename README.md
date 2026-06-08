@@ -39,6 +39,21 @@ gate are local Python — free, and the part that gives the hard guarantee.
 
 ## Installation
 
+### Easiest: let Claude Code set it up
+
+Open [Claude Code](https://claude.com/claude-code) and paste this (point it at wherever you keep
+projects):
+
+> Clone https://github.com/AHorihuela/agreement-audit into my Dev folder, set up a Python virtual
+> environment, install its requirements, then confirm the `/agreement-audit` skill is available.
+
+Claude Code clones the repo, creates the venv, installs the parsers (`python-docx`, PyMuPDF), and the
+skill (`.claude/skills/agreement-audit`) is **auto-discovered** the moment you're working in that
+folder — no restart. From then on, run Claude Code **from the `agreement-audit` folder** and use
+`/agreement-audit`.
+
+### Manual
+
 ```bash
 git clone https://github.com/AHorihuela/agreement-audit.git
 cd agreement-audit
@@ -46,13 +61,25 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Then open Claude Code in this folder. The skill (`.claude/skills/agreement-audit`) is auto-discovered —
-no restart needed.
+Then open Claude Code in this folder.
 
-> This is a **clone-and-run** skill, not a prompt-only plugin: the grounding gate and the report run as
-> real local code, so the contracts and the scripts live together in the repo.
+> **Clone-and-run, not a prompt-only plugin.** The grounding gate and the report run as real local
+> code, so the scripts and your contracts live together in the repo — run Claude Code **from the repo
+> folder** (that's how the skill finds `scripts/` and your `agreements/`). Copying just the `SKILL.md`
+> elsewhere will not work.
 
 ## Usage
+
+**What happens when you run `/agreement-audit`:**
+
+1. It confirms the **scope** — which folder of contracts and which clauses (defaults: governing law,
+   exclusivity, term, termination notice, MFN). On a big corpus it warns you and suggests a sample first.
+2. It **reads every contract** and, for each clause, has one agent pull the answer with a *verbatim quote*.
+3. **Two more agents** check each quote actually supports the answer; disagreement → the review queue.
+4. A deterministic gate **re-checks every quote in the source** and drops any that isn't word-for-word.
+5. It **shows you the results in chat** — a coverage receipt, the doc × clause grid, and the review
+   queue — and writes a **Word report** to `.audit/report.docx`.
+6. You can then **ask follow-up questions** about the results (answered from the grounded findings).
 
 **Try it first** on the included synthetic sample (safe — not a real contract):
 
