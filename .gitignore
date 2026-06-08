@@ -1,0 +1,11 @@
+# Confidential — NEVER commit real contracts or generated reports.
+agreements/*
+!agreements/.gitkeep
+.audit/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
