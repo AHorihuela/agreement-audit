@@ -44,8 +44,11 @@ actually in the source — is decided by code, never by an agent's say-so.
 5. **Report the findings in chat** (do not just point at the file): show the **coverage receipt**
    (N examined / grounded / review / dropped / not found), the **doc × clause grid** as a readable
    Markdown table (status emoji + short value per cell), and the **review queue** in full (each flagged
-   item with the clause, the extracted answer, the verbatim quote, and *why* it was flagged). Then name
-   the Word report path (`.audit/report.docx`). State plainly, without softening:
+   item with the clause, the extracted answer, the verbatim quote, and *why* it was flagged — review
+   reasons distinguish *refuted* / *not verified* / *source not loaded* / *low confidence*). Call out
+   any documents that **could not be parsed** (the skipped list, with reasons). If **zero** documents
+   parsed, say so plainly — an empty run is not a clean audit. Then name the Word report path
+   (`.audit/report.docx`). State plainly, without softening:
    - Grounding proves each quote is **present in the source**, not that the conclusion is **correct**.
    - The verify step + review queue surface likely errors, but a **lawyer must adjudicate** the queue
      and **spot-check a sample** — the true error rate is unknown until checked against ground truth.

@@ -70,17 +70,25 @@ def main() -> int:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    doc_ids, skipped = [], []
+    doc_ids, skipped, seen = [], [], {}
     for path in sorted(docs_dir.iterdir()) if docs_dir.is_dir() else []:
         if not path.is_file() or path.suffix.lower() not in SUPPORTED:
             continue
         doc_id = path.stem
+        # Same-stem files (acme.docx + acme.pdf) would overwrite each other's .md and double-count the
+        # coverage receipt — a silent loss of a document. Refuse rather than corrupt the audit.
+        if doc_id in seen:
+            raise SystemExit(f"Duplicate document id {doc_id!r}: '{seen[doc_id].name}' and "
+                             f"'{path.name}' share a filename stem. Rename one — same-stem inputs "
+                             f"would overwrite each other and under-count coverage.")
+        seen[doc_id] = path
         try:
             text = extract_text(path).strip()
-        except Exception:
-            text = ""
-        if not text:                                         # unsupported / scanned -> needs OCR; skip honestly
-            skipped.append(doc_id)
+            reason = "" if text else "no extractable text (likely scanned/encrypted — needs OCR)"
+        except Exception as e:                               # a real parse failure, not a scanned doc
+            text, reason = "", f"parse error: {type(e).__name__}: {e}"
+        if not text:                                         # record WHY, never a silent vanish
+            skipped.append({"doc_id": doc_id, "reason": reason})
             continue
         (out / f"{doc_id}.md").write_text(text, encoding="utf-8")
         doc_ids.append(doc_id)

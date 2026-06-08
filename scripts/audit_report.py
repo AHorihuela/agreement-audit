@@ -3,7 +3,7 @@
 Run AFTER the multi-agent workflow. For every finding it RE-GROUNDS the quote against the source with
 `ground.verify_quote` — the hard misquotation gate — so grounding is decided by code here, never taken
 on an agent's word. A quote that is not verbatim-present is DROPPED (never presented as fact). It then
-writes the doc × clause grid, the coverage receipt (every doc examined), and a human-review queue.
+writes the doc × clause grid, the coverage receipt, and a human-review queue.
 
 Outputs (both optional, at least one required):
   --out  <file.md>    a Markdown record (machine/diff-friendly)
@@ -25,71 +25,111 @@ from ground import verify_quote  # noqa: E402
 
 # status -> (symbol, text-hex, fill-hex)
 STATUS = {
-    "answer":     ("✓", "2E6B47", "E5EFE7"),   # grounded + supported
-    "review":     ("⚠", "946011", "F7ECD4"),   # grounded but the quote may not support the claim
+    "answer":     ("✓", "2E6B47", "E5EFE7"),   # grounded + verifier-supported
+    "review":     ("⚠", "946011", "F7ECD4"),   # grounded but refuted / unverified / low-confidence
     "ungrounded": ("⛔", "A23B2E", "F4E3DF"),   # quote not verbatim in source -> dropped
+    "no_source":  ("⛔", "A23B2E", "F4E3DF"),   # the parsed source text was not loaded -> can't verify
     "not_found":  ("—", "6B6358", "EFEADF"),   # genuinely absent
 }
 
 
 def classify(data: dict, md_dir: str) -> dict:
-    """Re-ground every finding and bucket it. The single source of truth for both writers."""
-    fields = data.get("fields", [])
-    findings = data.get("findings", [])
-    doc_ids = data.get("doc_ids") or sorted({f["doc"] for f in findings})
-    skipped = data.get("skipped", [])
+    """Re-ground every finding and bucket it. The single source of truth for both writers.
 
-    _cache: dict[str, str] = {}
-    def src(doc: str) -> str:
+    Counts are tallied from the RENDERED grid (doc_ids × fields), not per-finding, so the coverage
+    receipt always matches what the grid shows — duplicate or stray findings can't inflate it.
+    """
+    fields = data.get("fields") or []
+    findings = data.get("findings", [])
+    doc_ids = data.get("doc_ids") or sorted({f.get("doc") for f in findings if f.get("doc")})
+    skipped = data.get("skipped", [])
+    if not fields:                                       # derive from findings if absent
+        fields = [{"key": k, "label": k} for k in sorted({f.get("field") for f in findings if f.get("field")})]
+    field_keys = [f["key"] for f in fields]
+
+    _cache: dict[str, object] = {}
+    def src(doc: str):
         if doc not in _cache:
             p = Path(md_dir) / f"{doc}.md"
-            _cache[doc] = p.read_text(encoding="utf-8") if p.exists() else ""
+            _cache[doc] = p.read_text(encoding="utf-8") if p.exists() else None  # None = source missing
         return _cache[doc]
 
     grid = {d: {} for d in doc_ids}
     review = []
-    counts = {"answer": 0, "review": 0, "ungrounded": 0, "not_found": 0}
+    malformed = 0
+    seen = set()
     for f in findings:
-        doc, key = f["doc"], f["field"]
+        doc, key = f.get("doc"), f.get("field")
+        if not doc or not key:                           # malformed finding -> log, never crash the run
+            malformed += 1
+            continue
+        if (doc, key) in seen:                           # duplicate (doc, field) -> keep first, don't recount
+            continue
+        seen.add((doc, key))
         grid.setdefault(doc, {})
+        label = f.get("label", key)
         if not f.get("found"):
             grid[doc][key] = {"status": "not_found", "value": "not found", "quote": "", "why": ""}
-            counts["not_found"] += 1
             continue
-        g = verify_quote(src(doc), f.get("quote") or "")
-        if not g.grounded:                               # quote not verbatim -> never trust it
-            grid[doc][key] = {"status": "ungrounded", "value": f.get("value") or "",
-                              "quote": f.get("quote") or "", "why": "Quote is not verbatim in the source."}
-            counts["ungrounded"] += 1
-            review.append({"doc": doc, "key": key, "label": f.get("label", key), "status": "ungrounded",
-                           "value": f.get("value"), "quote": f.get("quote") or "",
+        source = src(doc)
+        quote = f.get("quote") or ""
+        if source is None:                               # source not on disk -> can't verify (NOT a misquote)
+            grid[doc][key] = {"status": "no_source", "value": f.get("value") or "", "quote": quote,
+                              "why": "Source text not loaded — could not verify."}
+            review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                           "why": "SOURCE NOT LOADED — the parsed text for this document was missing, so the "
+                                  "quote could not be grounded. Check that --md points at the parsed output."})
+            continue
+        if not verify_quote(source, quote).grounded:     # quote not verbatim -> drop, never show as fact
+            grid[doc][key] = {"status": "ungrounded", "value": f.get("value") or "", "quote": quote,
+                              "why": "Quote is not verbatim in the source."}
+            review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
                            "why": "DROPPED — the cited quote is not present verbatim in the source."})
             continue
-        supports = f.get("verify_supports", True)
+        vs = f.get("verify_supports", None)              # True | False | None(not verified)
         low_conf = (f.get("confidence") if f.get("confidence") is not None else 1.0) < 0.5
-        status = "answer" if supports else "review"
-        grid[doc][key] = {"status": status, "value": f.get("value") or "(see quote)",
-                          "quote": f.get("quote") or "", "why": "" if supports else (f.get("verify_reason") or "")}
-        counts[status] += 1
-        if not supports:
-            review.append({"doc": doc, "key": key, "label": f.get("label", key), "status": "review",
-                           "value": f.get("value"), "quote": f.get("quote") or "",
+        if vs is False:
+            grid[doc][key] = {"status": "review", "value": f.get("value") or "(see quote)", "quote": quote,
+                              "why": f.get("verify_reason") or ""}
+            review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
                            "why": "VERIFY REFUTED — " + (f.get("verify_reason") or "the quote may not support the claim.")})
-        elif low_conf:
-            review.append({"doc": doc, "key": key, "label": f.get("label", key), "status": "review",
-                           "value": f.get("value"), "quote": f.get("quote") or "",
-                           "why": "LOW CONFIDENCE — the extractor was unsure."})
+        elif vs is None:                                 # grounded, but support was never checked
+            grid[doc][key] = {"status": "review", "value": f.get("value") or "(see quote)", "quote": quote,
+                              "why": "Grounded, but support was not checked."}
+            review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                           "why": "NOT VERIFIED — the quote is present in the source, but the verifier did not "
+                                  "run, so whether it supports the answer was not checked. Review manually."})
+        else:                                            # grounded + supported
+            grid[doc][key] = {"status": "answer", "value": f.get("value") or "(see quote)", "quote": quote,
+                              "why": ""}
+            if low_conf:
+                review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                               "why": "LOW CONFIDENCE — the extractor was unsure; spot-check."})
 
-    return {"doc_ids": doc_ids, "skipped": skipped,
-            "fields": fields or [{"key": k, "label": k} for k in sorted({f["field"] for f in findings})],
-            "grid": grid, "review": review, "counts": counts}
+    counts = {s: 0 for s in STATUS}
+    for d in doc_ids:                                    # tally the RENDERED grid -> receipt == grid
+        for k in field_keys:
+            counts[grid.get(d, {}).get(k, {"status": "not_found"})["status"]] += 1
+
+    return {"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "grid": grid,
+            "review": review, "counts": counts, "malformed": malformed}
 
 
-def _receipt(c: dict, n: int, skipped: list) -> str:
-    s = (f"{n}/{n} agreements examined · {c['answer']} grounded answers · {c['review']} need review "
-         f"· {c['ungrounded']} dropped (unverifiable) · {c['not_found']} not found")
+def _skip(s) -> tuple:
+    if isinstance(s, dict):
+        return s.get("doc_id", "?"), s.get("reason", "")
+    return str(s), ""
+
+
+def _receipt(counts: dict, n_docs: int, n_cells: int, skipped: list, malformed: int) -> str:
+    dropped = counts.get("ungrounded", 0) + counts.get("no_source", 0)
+    s = (f"{n_docs} agreements examined · {n_cells} clause checks · {counts.get('answer', 0)} grounded "
+         f"· {counts.get('review', 0)} need review · {dropped} dropped/unverifiable "
+         f"· {counts.get('not_found', 0)} not found")
     if skipped:
-        s += f" · {len(skipped)} skipped (unparsed/OCR)"
+        s += f" · {len(skipped)} could not be parsed"
+    if malformed:
+        s += f" · {malformed} malformed finding(s) ignored"
     return s
 
 
@@ -97,10 +137,10 @@ def _receipt(c: dict, n: int, skipped: list) -> str:
 
 def write_md(path: str, R: dict) -> None:
     grid, fields, doc_ids = R["grid"], R["fields"], R["doc_ids"]
-    cols = [f["label"] for f in fields]
-    keys = [f["key"] for f in fields]
+    cols, keys = [f["label"] for f in fields], [f["key"] for f in fields]
+    n_cells = len(doc_ids) * len(keys)
     out = ["# Agreement clause audit\n",
-           f"**Coverage receipt:** {_receipt(R['counts'], len(doc_ids), R['skipped'])}\n",
+           f"**Coverage receipt:** {_receipt(R['counts'], len(doc_ids), n_cells, R['skipped'], R['malformed'])}\n",
            "\n## Clauses across the portfolio\n",
            "| Agreement | " + " | ".join(cols) + " |",
            "|" + "---|" * (len(cols) + 1)]
@@ -117,8 +157,14 @@ def write_md(path: str, R: dict) -> None:
         for r in R["review"]:
             out.append(f"- **{r['doc']}** · `{r['key']}` — {r['why']}"
                        + (f" (extracted: {r['value']})" if r.get("value") else ""))
+    if R["skipped"]:
+        out.append("\n## Could not be parsed (not audited)\n")
+        for s in R["skipped"]:
+            sid, reason = _skip(s)
+            out.append(f"- **{sid}** — {reason or 'no extractable text'}")
     out.append("\n---\n_Grounding (✓ quote verbatim-present) is deterministic; it proves presence, not "
-               "correctness. ⚠ needs review, ⛔ dropped (quote not in source). A lawyer signs off._\n")
+               "correctness. ⚠ needs review (refuted / unverified / low-confidence). ⛔ dropped (quote not "
+               "in source, or source not loaded). A lawyer signs off._\n")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text("\n".join(out), encoding="utf-8")
 
@@ -138,7 +184,9 @@ def write_docx(path: str, R: dict) -> None:
     from docx import Document
     from docx.shared import Pt, RGBColor
 
-    grid, fields, doc_ids, review, counts = (R["grid"], R["fields"], R["doc_ids"], R["review"], R["counts"])
+    grid, fields, doc_ids, review = R["grid"], R["fields"], R["doc_ids"], R["review"]
+    keys = [f["key"] for f in fields]
+    n_cells = len(doc_ids) * len(keys)
     doc = Document()
 
     doc.add_heading("Agreement Clause Audit", 0)
@@ -147,15 +195,16 @@ def write_docx(path: str, R: dict) -> None:
 
     rc = doc.add_paragraph()
     rc.add_run("Coverage receipt: ").bold = True
-    rc.add_run(_receipt(counts, len(doc_ids), R["skipped"]))
+    rc.add_run(_receipt(R["counts"], len(doc_ids), n_cells, R["skipped"], R["malformed"]))
 
     leg = doc.add_paragraph()
     leg.add_run("How to read this report. ").bold = True
     leg.add_run("✓ grounded — the quote is present in the source verbatim; this proves the quote is real, "
-                "NOT that the conclusion is correct. ⚠ needs review — the quote may not support the answer. "
-                "⛔ dropped — the cited quote was not found in the source (removed). — not found — the clause "
-                "is genuinely absent. This report augments expert review; a lawyer signs off, and the true "
-                "error rate is unknown until a sample is checked against ground truth.")
+                "NOT that the conclusion is correct. ⚠ needs review — the verifier dissented, did not run, "
+                "or the extractor was unsure. ⛔ dropped — the quote was not found in the source (removed), "
+                "or the source text could not be loaded. — not found — the clause is genuinely absent. This "
+                "report augments expert review; a lawyer signs off, and the true error rate is unknown until "
+                "a sample is checked against ground truth.")
 
     h = doc.add_heading("Needs human review", level=1)
     h.runs[0].font.color.rgb = RGBColor(0xA2, 0x3B, 0x2E)
@@ -183,8 +232,15 @@ def write_docx(path: str, R: dict) -> None:
             so.add_run("Reviewer decision: ____________   Notes: ").bold = True
             so.add_run("________________________________________")
 
+    if R["skipped"]:
+        doc.add_heading("Could not be parsed (not audited)", level=1)
+        for s in R["skipped"]:
+            sid, reason = _skip(s)
+            p = doc.add_paragraph(style="List Bullet")
+            p.add_run(f"{sid}: ").bold = True
+            p.add_run(reason or "no extractable text")
+
     doc.add_heading("Clauses across the portfolio", level=1)
-    keys = [f["key"] for f in fields]
     table = doc.add_table(rows=1, cols=len(fields) + 1)
     table.style = "Table Grid"
     hdr = table.rows[0].cells
@@ -244,9 +300,10 @@ def main() -> int:
         write_md(args.out, R)
     if args.docx:
         write_docx(args.docx, R)
-    c = R["counts"]
-    print(f"{len(R['doc_ids'])} docs · {c['answer']} answers · {c['review']} review · "
-          f"{c['ungrounded']} dropped · {c['not_found']} not found"
+    c, n_cells = R["counts"], len(R["doc_ids"]) * len(R["fields"])
+    print(f"{len(R['doc_ids'])} docs · {n_cells} checks · {c['answer']} grounded · {c['review']} review · "
+          f"{c['ungrounded'] + c['no_source']} dropped · {c['not_found']} not found"
+          + (f" · {R['malformed']} malformed ignored" if R["malformed"] else "")
           + (f"  -> {args.out}" if args.out else "") + (f"  -> {args.docx}" if args.docx else ""))
     return 0
 

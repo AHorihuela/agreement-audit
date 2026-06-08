@@ -45,6 +45,8 @@ def _normalize(text: str) -> str:
 def _word_bounded_index(haystack: str, needle: str) -> Optional[int]:
     """First index of `needle` in `haystack` not glued mid-word on an alphanumeric edge. Prevents
     "art" matching inside "party" while allowing punctuation-edged quotes (e.g. "$5,000,000")."""
+    if not needle:                       # empty needle has no boundaries to check (would IndexError below)
+        return None
     start = haystack.find(needle)
     while start != -1:
         end = start + len(needle)

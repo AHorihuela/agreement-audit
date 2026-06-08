@@ -18,7 +18,10 @@ const PREP_SCHEMA = {
   type: "object", additionalProperties: false,
   properties: {
     doc_ids: { type: "array", items: { type: "string" } },
-    skipped: { type: "array", items: { type: "string" } },
+    skipped: { type: "array", items: {
+      type: "object", additionalProperties: false,
+      properties: { doc_id: { type: "string" }, reason: { type: "string" } },
+      required: ["doc_id", "reason"] } },
     fields: { type: "array", items: {
       type: "object", additionalProperties: false,
       properties: { key: { type: "string" }, label: { type: "string" }, question: { type: "string" } },
@@ -85,10 +88,16 @@ const verified = (await parallel(found.map((x) => () =>
       { label: `verify:${x.doc}:${x.field}:${i}`, phase: "Verify", schema: VERDICT_SCHEMA })
   )).then((vs) => {
     const v = vs.filter(Boolean)
-    // Conservative / adversarial: "supported" only if EVERY lens agrees; any refutation -> human review.
-    const supports = v.length > 0 && v.every((z) => z.supports)
+    // Distinguish an infrastructure failure from a substantive dissent. Both verifier agents erroring
+    // is NOT a refutation — never label it one. supports=null => "not verified" (still -> review).
+    if (v.length === 0)
+      return { key: `${x.doc}::${x.field}`, supports: null, status: "errored",
+               reason: "the verifier agents did not return a verdict" }
+    // Conservative / adversarial: "supported" only if EVERY lens agrees; any dissent -> human review.
+    const supports = v.every((z) => z.supports)
     const dissent = v.find((z) => !z.supports)
-    return { key: `${x.doc}::${x.field}`, supports, reason: dissent ? dissent.reason : (v[0] || {}).reason || "" }
+    return { key: `${x.doc}::${x.field}`, supports, status: "ran",
+             reason: dissent ? dissent.reason : (v[0].reason || "") }
   })
 ))).filter(Boolean)
 const vmap = {}
@@ -99,7 +108,10 @@ const findings = extracted.map((x) => {
   return {
     doc: x.doc, field: x.field, label: x.label, value: x.value, quote: x.quote,
     found: x.found, confidence: x.confidence,
-    verify_supports: vr ? vr.supports : (x.found ? true : null),
+    // null = NOT verified (no verdict mapped — the verify task failed). Never default a
+    // found-but-unverified finding to "supported"; the report routes null -> human review.
+    verify_supports: vr ? vr.supports : null,
+    verify_status: vr ? vr.status : (x.found && (x.quote || "").trim() ? "not_run" : "n/a"),
     verify_reason: vr ? vr.reason : "",
   }
 })
