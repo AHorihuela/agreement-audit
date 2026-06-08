@@ -39,20 +39,24 @@ gate are local Python — free, and the part that gives the hard guarantee.
 
 ## Installation
 
-### Easiest: let Claude Code set it up
+### Global install — works in any session, including Cowork (recommended)
 
-Open [Claude Code](https://claude.com/claude-code) and paste this (point it at wherever you keep
-projects):
+Make `/agreement-audit` available in **every** Claude Code / Cowork session, from any folder:
 
-> Clone https://github.com/AHorihuela/agreement-audit into my Dev folder, set up a Python virtual
-> environment, install its requirements, then confirm the `/agreement-audit` skill is available.
+```bash
+git clone https://github.com/AHorihuela/agreement-audit.git
+cd agreement-audit
+./install.sh
+```
 
-Claude Code clones the repo, creates the venv, installs the parsers (`python-docx`, PyMuPDF), and the
-skill (`.claude/skills/agreement-audit`) is **auto-discovered** the moment you're working in that
-folder — no restart. From then on, run Claude Code **from the `agreement-audit` folder** and use
-`/agreement-audit`.
+`install.sh` copies the skill (with its bundled scripts) to `~/.claude/skills/`, the script-free
+workflow to `~/.claude/workflows/` — which Claude Code discovers **by name in every session** — and
+pip-installs the parsers. Then open Claude Code or **Claude Cowork** in *any* folder and run
+`/agreement-audit`; your documents can live anywhere on disk. Or just ask Claude Code:
 
-### Manual
+> Clone https://github.com/AHorihuela/agreement-audit and run its install.sh so /agreement-audit works in any session.
+
+### Try it in-place (no global install)
 
 ```bash
 git clone https://github.com/AHorihuela/agreement-audit.git
@@ -61,12 +65,14 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Then open Claude Code in this folder.
+Open Claude Code in this folder and run `/agreement-audit` — the project skill is auto-discovered.
 
-> **Clone-and-run, not a prompt-only plugin.** The grounding gate and the report run as real local
-> code, so the scripts and your contracts live together in the repo — run Claude Code **from the repo
-> folder** (that's how the skill finds `scripts/` and your `agreements/`). Copying just the `SKILL.md`
-> elsewhere will not work.
+> The grounding gate and report run as real local code; the skill bundles its scripts and self-locates
+> them via `${CLAUDE_SKILL_DIR}`, so it works installed globally or in-place. The multi-agent step needs
+> the **Workflow tool** (Claude Code v2.1.154+, a paid plan; on Pro, enable *Dynamic workflows* in
+> `/config`). Cowork's support for the Workflow tool isn't documented yet — so for the single-document
+> case the skill **falls back to running inline without it**, which keeps the common case working there
+> regardless.
 
 ## Usage
 

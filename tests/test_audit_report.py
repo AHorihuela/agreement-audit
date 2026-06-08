@@ -3,7 +3,7 @@ the coverage receipt consistent with what the grid actually shows."""
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".claude/skills/agreement-audit/scripts"))
 import audit_report  # noqa: E402
 
 

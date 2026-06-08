@@ -152,7 +152,11 @@ def main() -> int:
             continue
         (src_dir / f"{doc_id}.md").write_text(text, encoding="utf-8")
         doc_ids.append(doc_id)
-    print(json.dumps({"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "sources": str(src_dir)}))
+    manifest = {"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "sources": str(src_dir)}
+    # Persist the manifest so the (script-free) workflow can read scope from it, and the skill can
+    # reuse it to assemble findings.json — one source of truth, no reliance on the workflow `args`.
+    (Path(args.out) / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    print(json.dumps(manifest))
     return 0
 
 

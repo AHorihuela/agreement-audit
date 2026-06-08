@@ -8,27 +8,24 @@ export const meta = {
   ],
 }
 
-// Scope (docs + clauses) is resolved by audit_prep from .audit/audit_config.json (written by the
-// skill) — NOT from the workflow `args` global, which is not reliably plumbed to a saved/scriptPath
-// workflow. The workflow fans out over whatever Prepare returns.
+// This workflow is SCRIPT-FREE and CWD-portable: the skill runs the parser (audit_prep) BEFORE
+// invoking the workflow, which writes `.audit/manifest.json` + `.audit/sources/<id>.md`. The workflow
+// only reads that manifest and fans agents out over the already-parsed sources — so it works whether
+// it's a project workflow or a user-level one in ~/.claude/workflows/, from any working directory.
 const WORK = ".audit"
-const CONFIG = `${WORK}/audit_config.json`
-const SOURCES = `${WORK}/sources`        // audit_prep writes per-doc text here (wiped each run)
+const MANIFEST = `${WORK}/manifest.json`
+const SOURCES = `${WORK}/sources`        // audit_prep wrote per-doc text here (wiped each run)
 
 const PREP_SCHEMA = {
   type: "object", additionalProperties: false,
   properties: {
     doc_ids: { type: "array", items: { type: "string" } },
-    skipped: { type: "array", items: {
-      type: "object", additionalProperties: false,
-      properties: { doc_id: { type: "string" }, reason: { type: "string" } },
-      required: ["doc_id", "reason"] } },
     fields: { type: "array", items: {
       type: "object", additionalProperties: false,
       properties: { key: { type: "string" }, label: { type: "string" }, question: { type: "string" } },
       required: ["key", "label", "question"] } },
   },
-  required: ["doc_ids", "skipped", "fields"],
+  required: ["doc_ids", "fields"],
 }
 const EXTRACT_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -44,10 +41,10 @@ const VERDICT_SCHEMA = {
 
 phase("Prepare")
 const prep = await agent(
-  `Parse the agreements + resolve the audit scope. Run EXACTLY this (local parse — no API call):\n` +
-  `  python3 scripts/audit_prep.py --config ${JSON.stringify(CONFIG)} --out ${JSON.stringify(WORK)}\n\n` +
-  `It writes one <doc_id>.md per agreement under ${SOURCES}/ and prints a JSON object ` +
-  `{"doc_ids":[...],"skipped":[...],"fields":[{key,label,question},...]}. Return that object exactly.`,
+  `The skill already parsed the agreements. Read the scope manifest — run:\n` +
+  `  cat ${JSON.stringify(MANIFEST)}\n\n` +
+  `It is a JSON object with "doc_ids" (each has a parsed source at ${SOURCES}/<doc_id>.md) and ` +
+  `"fields" (an array of {key,label,question}). Return {"doc_ids": <its doc_ids>, "fields": <its fields>}.`,
   { label: "prepare", phase: "Prepare", schema: PREP_SCHEMA })
 const docIds = (prep && prep.doc_ids) || []
 const FIELDS = (prep && prep.fields) || []
@@ -119,7 +116,5 @@ const findings = extracted.map((x) => {
   }
 })
 
-return {
-  doc_ids: docIds, skipped: (prep && prep.skipped) || [],
-  fields: FIELDS.map((f) => ({ key: f.key, label: f.label })), findings,
-}
+// `skipped` lives in .audit/manifest.json (from the parser); the skill merges it into findings.json.
+return { doc_ids: docIds, fields: FIELDS.map((f) => ({ key: f.key, label: f.label })), findings }

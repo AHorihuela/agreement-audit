@@ -47,29 +47,38 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
    a large corpus (e.g. 25 docs × 5 clauses ≈ 280 agents / millions of subscription tokens, ~10+ min) is
    not — for a big folder, **confirm with the user before auditing the whole corpus**, or suggest a sample.
 
-2. **Run the workflow** (subscription-billed) — scope read from the config, no args:
-   `Workflow({ name: "agreement-audit" })`  (if the name doesn't resolve, use
-   `Workflow({ scriptPath: ".claude/workflows/agreement-audit.js" })`). It runs `audit_prep`, fans out
-   one agent per (document × clause) to extract `{value, verbatim quote, found, confidence}`, then runs
-   two diverse-lens verifier agents per finding (a finding is "clean" only if **both** agree; any
-   dissent → review queue). It returns `{ doc_ids, skipped, fields, findings }`.
+2. **Parse the documents (local, no API).** Run the parser yourself — it self-locates via the skill
+   directory, so this works from any folder, installed per-project or globally:
+   `Bash: python3 "${CLAUDE_SKILL_DIR}/scripts/audit_prep.py" --config .audit/audit_config.json --out .audit`
+   It writes the parsed text to `.audit/sources/<doc_id>.md`, a `.audit/manifest.json` (doc_ids, skipped,
+   fields), and prints the same. Note any **skipped** docs (with reasons) for the chat summary.
 
-3. **Persist the result:** `Write` the workflow's returned object to `.audit/findings.json`.
+3. **Audit each (document × clause)** — two paths:
+   - **Multi-agent (default, best):** `Workflow({ name: "agreement-audit" })`. It reads
+     `.audit/manifest.json`, fans out one agent per (doc × clause) to extract `{value, verbatim quote,
+     found, confidence}`, then two diverse-lens verifier agents per finding (clean only if **both**
+     agree; any dissent → review queue), and returns `{ doc_ids, fields, findings }`. If invoking by
+     name fails, retry with `Workflow({ scriptPath: "<CLAUDE_SKILL_DIR>/workflows/agreement-audit.js" })`
+     (resolve `${CLAUDE_SKILL_DIR}` first via a quick `echo`).
+   - **Inline fallback** (small scope, or a surface without the Workflow tool): do it yourself — read
+     each `.audit/sources/<doc_id>.md` and, per clause, produce `{doc, field, label, value, verbatim
+     quote, found, confidence}` with `verify_supports: null` (no independent adversarial check ran — the
+     report marks these "not verified"). Quote VERBATIM; the deterministic gate in step 4 drops anything
+     not actually in the source.
 
-4. **Ask where to save the Word report, then run the deterministic consolidation.** First ask the user
-   where the report should go (use `AskUserQuestion`): **(a) next to the agreement** (the referenced
-   file's folder, or the docs folder), **(b) the Desktop** (`~/Desktop`), or **(c) here in the repo**
-   (`.audit/`). Build the path from their choice with a descriptive filename, e.g.
-   `<agreement-or-folder-name> — clause audit.docx`. Then (the misquotation guarantee + receipt — code,
-   not an agent):
-   `Bash: python3 scripts/audit_report.py --findings .audit/findings.json --md .audit/sources --out .audit/report.md --docx "<chosen path>"`
+4. **Assemble findings + write the report.** Build `.audit/findings.json` = the manifest's `doc_ids`,
+   `skipped`, and `fields` **plus** the `findings` array (from the workflow's return, or your inline
+   findings), and `Write` it. Then **ask where to save the Word report** (`AskUserQuestion`):
+   **(a) next to the agreement** (the referenced file's folder), **(b) the Desktop** (`~/Desktop`), or
+   **(c) here in the repo** (`.audit/`). Build the path inside an **existing** directory with a
+   descriptive name, e.g. `<agreement-or-folder-name> — clause audit.docx`. Then run the deterministic
+   consolidation (the misquotation guarantee + receipt — code, not an agent):
+   `Bash: python3 "${CLAUDE_SKILL_DIR}/scripts/audit_report.py" --findings .audit/findings.json --md .audit/sources --out .audit/report.md --docx "<chosen path>"`
    It re-grounds **every** quote, **drops** any not verbatim-present, and writes the **Word deliverable**
    (coverage receipt, color-coded grid, per-document detail with the verbatim quotes, a review queue with
-   reviewer sign-off space) to the chosen location — which may be **anywhere on disk** (the report holds
-   the contract's text, so keeping it next to the source or on the Desktop, not in this repo, is fine and
-   often preferable). Build the path **inside an existing directory** (the agreement's folder, `~/Desktop`)
-   — don't invent a deep new tree from a typo. A Markdown record also goes to `.audit/`. **Tell the user
-   the exact saved path** (and that re-running overwrites it).
+   reviewer sign-off space) to the chosen path — which may be anywhere on disk (the report holds the
+   contract's text, so keeping it next to the source or on the Desktop is fine and often preferable).
+   A Markdown record also goes to `.audit/`. **Tell the user the exact saved path** (re-running overwrites it).
 
 5. **Report the findings in chat.** The chat response must contain the **actual analysis** — the
    grounded answer(s), the verbatim quotes, and the review queue — **not merely a pointer to the saved
@@ -83,8 +92,8 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
    item with the clause, the extracted answer, the verbatim quote, and *why* it was flagged — review
    reasons distinguish *refuted* / *not verified* / *source not loaded* / *low confidence*). Call out
    any documents that **could not be parsed** (the skipped list, with reasons). If **zero** documents
-   parsed, say so plainly — an empty run is not a clean audit. Then name the Word report path
-   (`.audit/report.docx`). State plainly, without softening:
+   parsed, say so plainly — an empty run is not a clean audit. Then name the **exact saved path** of the
+   Word report. State plainly, without softening:
    - Grounding proves each quote is **present in the source**, not that the conclusion is **correct**.
    - The verify step + review queue surface likely errors, but a **lawyer must adjudicate** the queue
      and **spot-check a sample** — the true error rate is unknown until checked against ground truth.
@@ -100,12 +109,13 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
      audited; **offer to run a scoped re-audit** for that clause (write a new config with just that
      field + the relevant docs, re-run the workflow). Do NOT answer a new clause from memory — it must
      go through the grounded pipeline.
-   Never present a quote you haven't confirmed is in `.audit/<doc>.md`; if in doubt, re-ground it.
+   Never present a quote you haven't confirmed is in `.audit/sources/<doc>.md`; if in doubt, re-ground it.
 
 ## Notes
-- **Requirements:** Python 3.10+, `pip install -r requirements.txt` (python-docx, PyMuPDF), and run
-  Claude Code from this repo (the workflow calls `scripts/`). Put the contracts in `agreements/`
-  (or pass another `docs_dir`). `.audit/` and `agreements/` hold confidential text — both are
-  **gitignored**; never commit real contracts or the generated report.
+- **Requirements:** Python 3.10+ with `python-docx` and `PyMuPDF` installed (the parser + grounding gate
+  are local Python; the Word report needs python-docx). The scripts self-locate via `${CLAUDE_SKILL_DIR}`
+  and the workflow is script-free, so the skill works **installed per-project OR globally** (see the
+  README's "Install globally"). Documents may live **anywhere on disk**; `.audit/` (working files +
+  sources + the Markdown record) holds confidential text and is gitignored.
 - **Scaling:** start small (a few docs, a few clauses); expand once the report shape + review-queue
   load look right on a sample.
