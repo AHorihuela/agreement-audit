@@ -97,6 +97,12 @@ Audits every contract in `agreements/` for the default clauses (governing law, e
 termination notice, MFN). **Start small** — point it at a handful of docs first; a large corpus is a
 long, token-heavy run (it will tell you and ask before doing the whole set).
 
+**Audit a single agreement** (not just a folder):
+
+```
+/agreement-audit — audit just agreements/acme-rights-agreement.pdf
+```
+
 **Scope to a sample or specific clauses:**
 
 ```

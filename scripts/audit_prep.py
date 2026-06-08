@@ -55,24 +55,55 @@ def extract_text(path: Path) -> str:
     return ""
 
 
+def select_files(docs_dir, files) -> list:
+    """Resolve the input files. This is what lets the audit run on ONE agreement, a named subset, or a
+    whole folder:
+      - an explicit `files` list (each a path) -> exactly those;
+      - `docs_dir` pointing at a single file -> just that file;
+      - `docs_dir` pointing at a directory -> every file in it.
+    """
+    if files:
+        return [Path(p) for p in files]
+    p = Path(docs_dir)
+    if p.is_dir():
+        return [c for c in sorted(p.iterdir()) if c.is_file()]
+    if p.is_file() or p.suffix:           # a real file, or a file-like path (typo) -> surface "not found"
+        return [p]
+    return []                             # a missing directory -> empty (the skill flags a zero-doc run)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", help="JSON {docs_dir, fields:[{key,label,question}]} — resolves scope")
-    ap.add_argument("--docs", help="directory of agreements (overridden by config.docs_dir)")
+    ap.add_argument("--config", help="JSON {docs_dir|files, fields:[{key,label,question}]} — resolves scope")
+    ap.add_argument("--docs", help="a directory OR a single file (overridden by config.docs_dir/files)")
     ap.add_argument("--out", default=".audit", help="where to write per-doc text (gitignore this)")
     args = ap.parse_args()
 
     cfg = {}
     if args.config and Path(args.config).is_file():
         cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    docs_dir = Path(cfg.get("docs_dir") or args.docs or DEFAULT_DOCS)
+    docs_dir = cfg.get("docs_dir") or args.docs or DEFAULT_DOCS
+    files_cfg = cfg.get("files")                          # optional explicit list of file paths
     fields = cfg.get("fields") or DEFAULT_FIELDS
+
+    candidates = select_files(docs_dir, files_cfg)
+    # An explicitly named file / list means the user picked these on purpose — surface a bad pick as a
+    # reasoned skip rather than silently ignoring it (as we do for stray files in a scanned directory).
+    dd = Path(docs_dir)
+    explicit = bool(files_cfg) or dd.is_file() or (bool(dd.suffix) and not dd.is_dir())
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     doc_ids, skipped, seen = [], [], {}
-    for path in sorted(docs_dir.iterdir()) if docs_dir.is_dir() else []:
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED:
+    for path in candidates:
+        if not path.is_file():
+            if explicit:
+                skipped.append({"doc_id": path.stem, "reason": "file not found"})
+            continue
+        if path.suffix.lower() not in SUPPORTED:
+            if explicit:
+                skipped.append({"doc_id": path.stem,
+                                "reason": f"unsupported file type ({path.suffix or 'no extension'})"})
             continue
         doc_id = path.stem
         # Same-stem files (acme.docx + acme.pdf) would overwrite each other's .md and double-count the

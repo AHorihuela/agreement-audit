@@ -16,9 +16,12 @@ actually in the source — is decided by code, never by an agent's say-so.
 ## Steps (when invoked as `/agreement-audit [docs_dir] [clauses…]`)
 
 1. **Resolve scope + write the config.** Default `docs_dir` = `agreements`; default clauses = governing
-   law, exclusivity, term, termination notice, MFN. If the user names specific documents or clauses,
-   build the scope from that. `Write` it to `.audit/audit_config.json` as
-   `{"docs_dir": "<dir>", "fields": [{"key": "...", "label": "...", "question": "..."}, …]}`.
+   law, exclusivity, term, termination notice, MFN. **Scope can be a whole folder, a single agreement,
+   or a named subset** — write `.audit/audit_config.json` accordingly:
+   - whole folder → `{"docs_dir": "agreements", "fields": [{"key": "...", "label": "...", "question": "..."}, …]}`
+   - **one agreement** → point `docs_dir` at the file: `{"docs_dir": "agreements/acme.pdf", "fields": […]}`
+   - a specific subset → `{"files": ["agreements/a.pdf", "agreements/b.docx"], "fields": […]}`
+   If the user names specific documents or clauses, build the scope from that.
    **This config — not the `args` global — is how scope reaches the workflow.**
    **Cost guard (read first):** ~1 extract + 2 verify agents per (doc × clause). A large corpus
    (e.g. 25 docs × 5 clauses ≈ 280 agents / millions of subscription tokens, ~10+ min) is expensive.
