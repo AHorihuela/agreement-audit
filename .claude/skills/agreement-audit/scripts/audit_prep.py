@@ -71,19 +71,33 @@ def select_files(docs_dir, files) -> list:
     to the current directory; the documents do NOT have to live inside this repo. This is what lets the
     audit run on ONE agreement, a named subset, a glob, or a whole folder:
       - an explicit `files` list (each a path) -> exactly those;
-      - `docs_dir` containing glob characters (`*?[`) -> the matches;
-      - `docs_dir` pointing at a single file -> just that file;
-      - `docs_dir` pointing at a directory -> every file in it.
+      - `docs_dir` pointing at a real file -> just that file (even if its name contains `[`/`]`);
+      - `docs_dir` pointing at a directory -> every file in it;
+      - otherwise `docs_dir` containing glob characters (`*?[`) -> the matches.
+
+    A LITERAL path is checked before glob interpretation, so a real filename that happens to contain
+    glob metacharacters — e.g. `LC_Redline ... [vs Current].pdf` — resolves to itself instead of being
+    parsed as a wildcard character-class (which matches a single char, and so would match nothing).
     """
     if files:
         return [Path(p).expanduser() for p in files]
     raw = str(Path(docs_dir).expanduser())                # expand ~ so external/home paths resolve
-    if any(ch in raw for ch in "*?["):                    # a glob, e.g. ~/deals/*.docx
-        return [Path(m) for m in sorted(_glob.glob(raw))]
     p = Path(raw)
+    if p.is_file():                                       # a real file wins over glob interpretation
+        return [p]
     if p.is_dir():
         return [c for c in sorted(p.iterdir()) if c.is_file()]
-    if p.is_file() or p.suffix:                           # a real file, or a file-like path (typo)
+    if any(ch in raw for ch in "*?["):                    # not a literal path -> treat as a glob
+        matches = sorted(_glob.glob(raw))
+        if matches:
+            return [Path(m) for m in matches]
+        # No matches: a bracketed name with no `*`/`?` is almost always a literal file the user typo'd,
+        # not an empty wildcard — surface it as not-found rather than vanishing it. A true `*`/`?` glob
+        # that matched nothing stays an empty (0-doc) run.
+        if p.suffix and not any(ch in raw for ch in "*?"):
+            return [p]
+        return []
+    if p.suffix:                                          # a file-like path that doesn't exist (typo)
         return [p]
     return []                                             # a missing directory -> empty (skill flags 0-doc)
 

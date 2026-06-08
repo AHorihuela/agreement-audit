@@ -16,6 +16,13 @@ const WORK = ".audit"
 const MANIFEST = `${WORK}/manifest.json`
 const SOURCES = `${WORK}/sources`        // audit_prep wrote per-doc text here (wiped each run)
 
+// Scope fingerprint — the skill passes `args: { scope: "<docs/clauses hash>" }`. The Prepare prompt is
+// otherwise byte-identical on every run (it just says "cat the manifest"), so the framework's
+// prompt-hash result cache could serve a PRIOR run's doc list — auditing the WRONG corpus. Folding the
+// per-scope fingerprint into the prompt makes the hash unique per run, so that can't happen. Guarded so
+// a name-only invocation (no args) still works.
+const SCOPE = (typeof args !== "undefined" && args && args.scope) ? String(args.scope) : ""
+
 const PREP_SCHEMA = {
   type: "object", additionalProperties: false,
   properties: {
@@ -41,10 +48,12 @@ const VERDICT_SCHEMA = {
 
 phase("Prepare")
 const prep = await agent(
-  `The skill already parsed the agreements. Read the scope manifest — run:\n` +
+  `The skill already parsed the agreements for THIS run${SCOPE ? ` (scope ${SCOPE})` : ""}. ` +
+  `Read the scope manifest — run:\n` +
   `  cat ${JSON.stringify(MANIFEST)}\n\n` +
   `It is a JSON object with "doc_ids" (each has a parsed source at ${SOURCES}/<doc_id>.md) and ` +
-  `"fields" (an array of {key,label,question}). Return {"doc_ids": <its doc_ids>, "fields": <its fields>}.`,
+  `"fields" (an array of {key,label,question}). Return EXACTLY the doc_ids and fields you read from ` +
+  `that file — do not substitute remembered values: {"doc_ids": <its doc_ids>, "fields": <its fields>}.`,
   { label: "prepare", phase: "Prepare", schema: PREP_SCHEMA })
 const docIds = (prep && prep.doc_ids) || []
 const FIELDS = (prep && prep.fields) || []

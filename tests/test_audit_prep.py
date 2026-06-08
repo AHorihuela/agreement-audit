@@ -68,6 +68,22 @@ def test_glob_expands(tmp_path):
     assert got == {"a.docx", "b.docx"}                                  # glob expands; c.txt excluded
 
 
+def test_literal_bracket_filename_is_not_globbed(tmp_path):
+    # A REAL filename containing glob metacharacters ("[vs Current]") must resolve to itself, not be
+    # parsed as a wildcard character-class (which matches a single char and so matches nothing here).
+    # This is the bug that made `LC_Redline ... [vs Current].pdf` silently select zero documents.
+    f = tmp_path / "Report [vs Current].pdf"
+    f.write_text("x", encoding="utf-8")
+    assert audit_prep.select_files(str(f), None) == [f]
+
+
+def test_missing_bracket_filename_is_surfaced(tmp_path):
+    # A non-existent file-like path with brackets is a typo, not a wildcard — surface it as not-found
+    # (so the skill reports it), rather than letting an empty glob silently vanish it.
+    missing = tmp_path / "Ghost [v2].pdf"
+    assert audit_prep.select_files(str(missing), None) == [missing]
+
+
 def test_dir_mode_surfaces_unsupported_but_ignores_dotfiles(tmp_path, monkeypatch, capsys):
     (tmp_path / "good.md").write_text("Governed by Delaware.", encoding="utf-8")
     (tmp_path / "contract.rtf").write_text("x", encoding="utf-8")       # real wrong-type file -> surfaced

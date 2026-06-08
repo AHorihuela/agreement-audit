@@ -34,7 +34,10 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
      one-word value. If the user names **no specific clause**, use the default set: governing law,
      exclusivity, term, termination notice, MFN.
    - Then `Write` `.audit/audit_config.json` = `{"docs_dir" | "files": …, "fields": [{key,label,question}, …]}`.
-     **This config — not the `args` global — is how scope reaches the workflow.**
+     **This config — not the `args` global — is how scope reaches the workflow** (the parser turns it into
+     `.audit/manifest.json`, which the workflow reads). Step 3 additionally passes a tiny `args.scope`
+     *fingerprint*, but only to bust the result cache — the actual doc/clause list always flows through
+     this config and the manifest.
 
    Example — "read the agreement in contracts/acme.pdf and explain the non-compete clause" →
    ```json
@@ -51,13 +54,29 @@ or `/agreement-audit — across the contracts in deals/, which have an MFN and w
    `Bash: python3 "${CLAUDE_SKILL_DIR}/scripts/audit_prep.py" --config .audit/audit_config.json --out .audit`
    It writes the parsed text to `.audit/sources/<doc_id>.md`, a `.audit/manifest.json` (doc_ids, skipped,
    fields), and prints the same. Note any **skipped** docs (with reasons) for the chat summary.
+   **Dependencies:** if the run fails — or every PDF/DOCX is skipped with `parse error: ModuleNotFoundError`
+   (e.g. no `fitz`/PyMuPDF or `docx`) — the `python3` on `PATH` lacks the deps. Install them
+   (`python3 -m pip install pymupdf python-docx`) **or** re-run with a project interpreter that has them
+   (e.g. `./.venv/bin/python` in place of `python3`), then continue with that same interpreter for step 4.
 
 3. **Audit each (document × clause)** — two paths:
-   - **Multi-agent (default, best):** `Workflow({ name: "agreement-audit" })`. It reads
+   - **Multi-agent (default, best):** invoke with a **scope fingerprint** so this run can never collide
+     with a cached prior run:
+     `Workflow({ name: "agreement-audit", args: { scope: "<fingerprint>" } })`. Build `scope` from
+     `.audit/manifest.json` as a short string unique to this scope — e.g. `"<N> docs · fields=<k1,k2,…> ·
+     <first doc_id>"`. (The workflow's "Prepare" prompt is otherwise byte-identical every run, so without
+     this the framework's result cache can serve a *different prior corpus*.) It reads
      `.audit/manifest.json`, fans out one agent per (doc × clause) to extract `{value, verbatim quote,
      found, confidence}`, then two diverse-lens verifier agents per finding (clean only if **both**
-     agree; any dissent → review queue), and returns `{ doc_ids, fields, findings }`. If invoking by
-     name fails, retry with `Workflow({ scriptPath: "<CLAUDE_SKILL_DIR>/workflows/agreement-audit.js" })`
+     agree; any dissent → review queue), and returns `{ doc_ids, fields, findings }`.
+     **Verify the corpus before trusting the result (mandatory):** the returned `doc_ids` MUST equal
+     `.audit/manifest.json`'s `doc_ids`. If they differ — or the findings name documents not present in
+     `.audit/sources/` — a stale/cached run returned the **wrong corpus**: DISCARD the output, do **not**
+     report it, and re-run (passing a fresh `scope`) or use the inline fallback. (The deterministic report
+     is the backstop: a wrong corpus comes back all-⛔ "source not loaded" because those sources aren't on
+     disk — never silently shown as fact — but catch it here rather than shipping an all-dropped report.)
+     If invoking by name fails, retry with
+     `Workflow({ scriptPath: "<CLAUDE_SKILL_DIR>/workflows/agreement-audit.js", args: { scope: "<fingerprint>" } })`
      (resolve `${CLAUDE_SKILL_DIR}` first via a quick `echo`).
    - **Inline fallback** (small scope, or a surface without the Workflow tool): do it yourself — read
      each `.audit/sources/<doc_id>.md` and, per clause, produce `{doc, field, label, value, verbatim
