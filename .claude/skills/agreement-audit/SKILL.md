@@ -13,20 +13,36 @@ verification) runs as Claude Code subagents → the user's subscription. Parsing
 verbatim-grounding gate** run as local Python, so the one hard guarantee — every quote shown is
 actually in the source — is decided by code, never by an agent's say-so.
 
-## Steps (when invoked as `/agreement-audit [docs_dir] [clauses…]`)
+## Steps
 
-1. **Resolve scope + write the config.** Default `docs_dir` = `agreements`; default clauses = governing
-   law, exclusivity, term, termination notice, MFN. **Scope can be a whole folder, a single agreement,
-   or a named subset** — write `.audit/audit_config.json` accordingly:
-   - whole folder → `{"docs_dir": "agreements", "fields": [{"key": "...", "label": "...", "question": "..."}, …]}`
-   - **one agreement** → point `docs_dir` at the file: `{"docs_dir": "agreements/acme.pdf", "fields": […]}`
-   - a specific subset → `{"files": ["agreements/a.pdf", "agreements/b.docx"], "fields": […]}`
-   If the user names specific documents or clauses, build the scope from that.
-   **This config — not the `args` global — is how scope reaches the workflow.**
-   **Cost guard (read first):** ~1 extract + 2 verify agents per (doc × clause). A large corpus
-   (e.g. 25 docs × 5 clauses ≈ 280 agents / millions of subscription tokens, ~10+ min) is expensive.
-   For a first run or a spot-check, scope `docs_dir` to a **small sample** (or fewer clauses) and
-   **confirm with the user before auditing the whole corpus.**
+The invocation is **natural language**, e.g.
+`/agreement-audit — read the agreement in contracts/acme.pdf and explain the non-compete clause`
+or `/agreement-audit — across the contracts in deals/, which have an MFN and what's the governing law?`
+
+1. **Read the request: resolve the path(s) and the clause(s)/question(s).** Parse the user's prose for:
+   - **Where** — the path they name (phrases like "in <path>", "the agreement at <path>", "the
+     contracts in <folder>"). A folder → `docs_dir`; a single file → `docs_dir` set to that file;
+     several named files → `files: [...]`. If they name no path, default `docs_dir` to `agreements`.
+   - **What** — the clause(s) / question(s) they ask about. Build **one `fields` entry per question**:
+     `key` = a short slug (`non_compete`), `label` = a short human label (`Non-compete`), `question` =
+     the user's ask rewritten as a clear, self-contained question. Keep their intent: a factual ask
+     ("what's the governing law") → a crisp question; an **explain/describe** ask ("explain the nature
+     of the non-compete") → keep that framing, so the answer is a short grounded explanation, not a
+     one-word value. If the user names **no specific clause**, use the default set: governing law,
+     exclusivity, term, termination notice, MFN.
+   - Then `Write` `.audit/audit_config.json` = `{"docs_dir" | "files": …, "fields": [{key,label,question}, …]}`.
+     **This config — not the `args` global — is how scope reaches the workflow.**
+
+   Example — "read the agreement in contracts/acme.pdf and explain the non-compete clause" →
+   ```json
+   {"docs_dir": "contracts/acme.pdf",
+    "fields": [{"key": "non_compete", "label": "Non-compete",
+                "question": "Explain the nature of the non-compete clause."}]}
+   ```
+
+   **Cost guard:** ~1 extract + 2 verify agents per (doc × clause). One agreement × one clause is tiny;
+   a large corpus (e.g. 25 docs × 5 clauses ≈ 280 agents / millions of subscription tokens, ~10+ min) is
+   not — for a big folder, **confirm with the user before auditing the whole corpus**, or suggest a sample.
 
 2. **Run the workflow** (subscription-billed) — scope read from the config, no args:
    `Workflow({ name: "agreement-audit" })`  (if the name doesn't resolve, use
