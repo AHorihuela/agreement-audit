@@ -22,11 +22,21 @@ find "$SKILL_DST" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/nu
 mkdir -p "$WF_DST"
 cp "$SRC/.claude/workflows/agreement-audit.js" "$WF_DST/agreement-audit.js"
 
-# Python deps (parser + grounding gate + Word report).
-if python3 -m pip install --quiet --upgrade python-docx PyMuPDF; then
-  echo "  deps installed (python-docx, PyMuPDF)"
+# Python deps (parser + grounding gate + Word report) — into a venv BUNDLED WITH THE SKILL. Modern
+# system Pythons (Homebrew/Debian, PEP 668 "externally managed") refuse bare `pip install`, which used
+# to leave a fresh global install broken. The skill prefers this venv at runtime and falls back to
+# `python3` only if it's absent.
+VENV="$SKILL_DST/.venv"
+if python3 -m venv "$VENV" && "$VENV/bin/python" -m pip install --quiet --upgrade pip python-docx PyMuPDF; then
+  echo "  deps installed into bundled venv ($VENV)"
 else
-  echo "  ⚠ could not pip install — run: python3 -m pip install python-docx PyMuPDF"
+  rm -rf "$VENV"
+  if python3 -m pip install --quiet --upgrade python-docx PyMuPDF 2>/dev/null; then
+    echo "  deps installed into python3 (no venv available)"
+  else
+    echo "  ⚠ could not install deps — create a venv and install python-docx + PyMuPDF, e.g.:"
+    echo "      python3 -m venv \"$VENV\" && \"$VENV/bin/pip\" install python-docx PyMuPDF"
+  fi
 fi
 
 echo "Done. Open Claude Code or Cowork in ANY folder and run:  /agreement-audit"

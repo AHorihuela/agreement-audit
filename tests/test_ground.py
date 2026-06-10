@@ -43,3 +43,44 @@ def test_normalized_fallback_for_reflow():
 
 def test_case_difference_does_not_ground():
     assert ground.verify_quote("the Party shall", "the party shall").grounded is False
+
+
+# --- PDF typography artifacts: a humanly-verbatim quote must ground against the typographic ---
+# --- noise PDF extraction leaves in the source (and vice versa). Folds are typographic only. ---
+
+def test_ligature_in_source_grounds():
+    g = ground.verify_quote("subject to the deﬁned terms herein", "the defined terms herein")
+    assert g.grounded and g.match_type == "normalized"
+
+
+def test_end_of_line_hyphenation_grounds():
+    g = ground.verify_quote("rights of termi-\nnation for convenience", "termination for convenience")
+    assert g.grounded and g.match_type == "normalized"
+
+
+def test_soft_hyphen_in_source_grounds():
+    g = ground.verify_quote("upon sixty­ (60) days notice", "upon sixty (60) days notice")
+    assert g.grounded and g.match_type == "normalized"
+
+
+def test_zero_width_chars_in_source_ground():
+    g = ground.verify_quote("govern​ed by Delaware﻿ law", "governed by Delaware law")
+    assert g.grounded and g.match_type == "normalized"
+
+
+def test_nonbreaking_hyphen_grounds():
+    g = ground.verify_quote("the non‑compete obligations", "the non-compete obligations")
+    assert g.grounded and g.match_type == "normalized"
+
+
+def test_folds_are_symmetric_quote_may_carry_the_artifact():
+    # The agent may copy the artifact character-for-character; both directions must ground.
+    assert ground.verify_quote("the defined terms", "the deﬁned terms").grounded is True
+
+
+def test_folds_do_not_loosen_the_gate():
+    # The folds are typographic, not semantic: absent text still never grounds.
+    assert ground.verify_quote("termi-\nnation for convenience", "termination for cause").grounded is False
+    assert ground.verify_quote("sixty (60) days", "thirty (30) days").grounded is False
+    # A real mid-word hyphen is NOT dehyphenated (only hyphen-before-linebreak is).
+    assert ground.verify_quote("a non-compete clause", "a noncompete clause").grounded is False

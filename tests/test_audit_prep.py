@@ -110,6 +110,59 @@ def test_stale_sources_wiped_each_run(tmp_path, monkeypatch, capsys):
     assert (work / "sources" / "new.md").exists()
 
 
+def test_manifest_content_hash_tracks_content_and_fields(tmp_path, monkeypatch, capsys):
+    doc = tmp_path / "a.md"
+    doc.write_text("Governed by Delaware.", encoding="utf-8")
+    out1 = _run(monkeypatch, capsys, ["--docs", str(doc), "--out", str(tmp_path / "w")])
+    out2 = _run(monkeypatch, capsys, ["--docs", str(doc), "--out", str(tmp_path / "w")])
+    assert out1["content_hash"] and out1["content_hash"] == out2["content_hash"]   # deterministic
+    doc.write_text("Governed by New York.", encoding="utf-8")                      # edit the contract
+    out3 = _run(monkeypatch, capsys, ["--docs", str(doc), "--out", str(tmp_path / "w")])
+    assert out3["content_hash"] != out1["content_hash"]    # same scope, new text -> new fingerprint
+    cfg = tmp_path / "cfg.json"                                                    # different clauses
+    cfg.write_text(json.dumps({"docs_dir": str(doc), "fields": [
+        {"key": "mfn", "label": "MFN", "question": "Is there an MFN?"}]}), encoding="utf-8")
+    out4 = _run(monkeypatch, capsys, ["--config", str(cfg), "--out", str(tmp_path / "w")])
+    assert out4["content_hash"] != out3["content_hash"]    # fields are part of the fingerprint
+
+
+def test_stale_findings_json_wiped_at_prep(tmp_path, monkeypatch, capsys):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "findings.json").write_text('{"findings": ["stale"]}', encoding="utf-8")
+    (tmp_path / "a.md").write_text("Governed by Delaware.", encoding="utf-8")
+    _run(monkeypatch, capsys, ["--docs", str(tmp_path / "a.md"), "--out", str(work)])
+    assert not (work / "findings.json").exists()   # a failed step-3 can't report the PRIOR run
+
+
+def test_pdf_page_offsets_recorded_in_manifest(tmp_path, monkeypatch, capsys):
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "two-pager.pdf"
+    d = fitz.open()
+    for marker in ("PageOneClause governs.", "PageTwoClause survives."):
+        page = d.new_page()
+        page.insert_text((72, 72), marker)
+    d.save(str(pdf))
+    d.close()
+    out = _run(monkeypatch, capsys, ["--docs", str(pdf), "--out", str(tmp_path / "w")])
+    starts = out["pages"]["two-pager"]
+    assert len(starts) == 2 and starts[0] == 0 and starts[1] > 0
+    text = (tmp_path / "w" / "sources" / "two-pager.md").read_text(encoding="utf-8")
+    # The recorded offset must be consistent with the WRITTEN source: page 2's text sits at/after it.
+    assert text.index("PageTwoClause") >= starts[1] and "PageOneClause" in text[: starts[1]]
+
+
+def test_scanned_pdf_skip_reason_points_at_ocr(tmp_path, monkeypatch, capsys):
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "scan.pdf"
+    d = fitz.open()
+    d.new_page()                                           # a blank page: no text layer
+    d.save(str(pdf))
+    d.close()
+    out = _run(monkeypatch, capsys, ["--docs", str(pdf), "--out", str(tmp_path / "w")])
+    assert out["doc_ids"] == [] and "ocrmypdf" in out["skipped"][0]["reason"]
+
+
 def test_cross_folder_same_stem_raises(tmp_path, monkeypatch):
     a, b = tmp_path / "a" / "contract.md", tmp_path / "b" / "contract.txt"
     a.parent.mkdir(); b.parent.mkdir()

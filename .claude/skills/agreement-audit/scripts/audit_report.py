@@ -15,6 +15,7 @@ Usage:
       --out .audit/report.md --docx .audit/report.docx
 """
 import argparse
+import bisect
 import json
 import sys
 from datetime import datetime
@@ -30,7 +31,17 @@ STATUS = {
     "ungrounded": ("⛔", "A23B2E", "F4E3DF"),   # quote not verbatim in source -> dropped
     "no_source":  ("⛔", "A23B2E", "F4E3DF"),   # the parsed source text was not loaded -> can't verify
     "not_found":  ("—", "6B6358", "EFEADF"),   # genuinely absent
+    "missing":    ("∅", "946011", "F7ECD4"),   # extraction returned NOTHING — an infra failure, not absence
 }
+
+
+def _page_of(pages: dict, doc: str, char_start):
+    """Map an exact-match character offset to a 1-based page number via the parser's per-page offsets
+    (PDFs only). None when the doc has no page map or the match had no reliable offset."""
+    starts = (pages or {}).get(doc)
+    if not starts or char_start is None:
+        return None
+    return bisect.bisect_right(starts, char_start)
 
 
 def classify(data: dict, md_dir: str) -> dict:
@@ -54,6 +65,7 @@ def classify(data: dict, md_dir: str) -> dict:
             _cache[doc] = p.read_text(encoding="utf-8") if p.exists() else None  # None = source missing
         return _cache[doc]
 
+    pages = data.get("pages") or {}
     grid = {d: {} for d in doc_ids}
     review = []
     malformed = 0
@@ -68,8 +80,35 @@ def classify(data: dict, md_dir: str) -> dict:
         seen.add((doc, key))
         grid.setdefault(doc, {})
         label = f.get("label", key)
+        low_conf = (f.get("confidence") if f.get("confidence") is not None else 1.0) < 0.5
         if not f.get("found"):
+            # An absence claim is the audit's riskiest output. The workflow runs an absence check per
+            # not-found cell; a disputed or shaky absence is queued for a human, never shown as clean.
+            if f.get("absence_check") == "refuted":
+                cand = (f.get("absence_quote") or "").strip()
+                source = src(doc)
+                cg = verify_quote(source, cand) if (source is not None and cand) else None
+                ok = bool(cg and cg.grounded)            # the candidate itself must pass the ground gate
+                page = _page_of(pages, doc, cg.char_start) if ok else None
+                why = ("ABSENCE DISPUTED — the extractor reported this clause absent, but a verifier "
+                       "found candidate language"
+                       + ("" if ok else " (its candidate quote could not be grounded verbatim, so it is "
+                                        "not shown)")
+                       + (": " + f["absence_reason"] if f.get("absence_reason") else "."))
+                grid[doc][key] = {"status": "review", "value": "reported absent — disputed",
+                                  "quote": cand if ok else "", "why": why, "page": page}
+                review.append({"doc": doc, "key": key, "label": label, "value": "not found",
+                               "quote": cand if ok else "", "why": why, "page": page})
+                continue
             grid[doc][key] = {"status": "not_found", "value": "not found", "quote": "", "why": ""}
+            if low_conf:
+                review.append({"doc": doc, "key": key, "label": label, "value": "not found", "quote": "",
+                               "why": "LOW-CONFIDENCE ABSENCE — the extractor was unsure this clause is "
+                                      "really absent"
+                                      + (" (one verifier confirmed the absence)"
+                                         if f.get("absence_check") == "confirmed"
+                                         else ", and its absence was not independently checked")
+                                      + "; have a human search the document."})
             continue
         source = src(doc)
         quote = f.get("quote") or ""
@@ -80,36 +119,51 @@ def classify(data: dict, md_dir: str) -> dict:
                            "why": "SOURCE NOT LOADED — the parsed text for this document was missing, so the "
                                   "quote could not be grounded. Check that --md points at the parsed output."})
             continue
-        if not verify_quote(source, quote).grounded:     # quote not verbatim -> drop, never show as fact
+        g = verify_quote(source, quote)
+        if not g.grounded:                               # quote not verbatim -> drop, never show as fact
             grid[doc][key] = {"status": "ungrounded", "value": f.get("value") or "", "quote": quote,
                               "why": "Quote is not verbatim in the source."}
             review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
                            "why": "DROPPED — the cited quote is not present verbatim in the source."})
             continue
+        page = _page_of(pages, doc, g.char_start)        # exact matches carry the page the quote sits on
         vs = f.get("verify_supports", None)              # True | False | None(not verified)
-        low_conf = (f.get("confidence") if f.get("confidence") is not None else 1.0) < 0.5
         if vs is False:
             grid[doc][key] = {"status": "review", "value": f.get("value") or "(see quote)", "quote": quote,
-                              "why": f.get("verify_reason") or ""}
+                              "why": f.get("verify_reason") or "", "page": page}
             review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                           "page": page,
                            "why": "VERIFY REFUTED — " + (f.get("verify_reason") or "the quote may not support the claim.")})
         elif vs is None:                                 # grounded, but support was never checked
             grid[doc][key] = {"status": "review", "value": f.get("value") or "(see quote)", "quote": quote,
-                              "why": "Grounded, but support was not checked."}
+                              "why": "Grounded, but support was not checked.", "page": page}
             review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                           "page": page,
                            "why": "NOT VERIFIED — the quote is present in the source, but the verifier did not "
                                   "run, so whether it supports the answer was not checked. Review manually."})
         else:                                            # grounded + supported
             grid[doc][key] = {"status": "answer", "value": f.get("value") or "(see quote)", "quote": quote,
-                              "why": ""}
+                              "why": "", "page": page}
             if low_conf:
                 review.append({"doc": doc, "key": key, "label": label, "value": f.get("value"), "quote": quote,
+                               "page": page,
                                "why": "LOW CONFIDENCE — the extractor was unsure; spot-check."})
+
+    labels = {f["key"]: f.get("label", f["key"]) for f in fields}
+    for d in doc_ids:                                    # a cell with NO finding at all = the extract
+        for k in field_keys:                             # agent never returned — flag it, never imply absence
+            if k not in grid.get(d, {}):
+                grid.setdefault(d, {})[k] = {"status": "missing", "value": "no result", "quote": "",
+                                             "why": "Extraction returned nothing for this cell."}
+                review.append({"doc": d, "key": k, "label": labels.get(k, k), "value": "", "quote": "",
+                               "why": "EXTRACTION MISSING — no finding came back for this document × clause "
+                                      "(the agent errored or was skipped). This is NOT evidence the clause "
+                                      "is absent; re-run this cell."})
 
     counts = {s: 0 for s in STATUS}
     for d in doc_ids:                                    # tally the RENDERED grid -> receipt == grid
         for k in field_keys:
-            counts[grid.get(d, {}).get(k, {"status": "not_found"})["status"]] += 1
+            counts[grid.get(d, {}).get(k, {"status": "missing"})["status"]] += 1
 
     return {"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "grid": grid,
             "review": review, "counts": counts, "malformed": malformed}
@@ -126,6 +180,8 @@ def _receipt(counts: dict, n_docs: int, n_cells: int, skipped: list, malformed: 
     s = (f"{n_docs} agreements examined · {n_cells} clause checks · {counts.get('answer', 0)} grounded "
          f"· {counts.get('review', 0)} need review · {dropped} dropped/unverifiable "
          f"· {counts.get('not_found', 0)} not found")
+    if counts.get("missing"):
+        s += f" · {counts['missing']} not returned (extraction failed — re-run)"
     if skipped:
         s += f" · {len(skipped)} could not be parsed"
     if malformed:
@@ -155,7 +211,8 @@ def write_md(path: str, R: dict) -> None:
         out.append("_None flagged automatically — a human should still spot-check a sample._\n")
     else:
         for r in R["review"]:
-            out.append(f"- **{r['doc']}** · `{r['key']}` — {r['why']}"
+            loc = f" · p. {r['page']}" if r.get("page") else ""
+            out.append(f"- **{r['doc']}** · `{r['key']}`{loc} — {r['why']}"
                        + (f" (extracted: {r['value']})" if r.get("value") else ""))
     if R["skipped"]:
         out.append("\n## Could not be parsed (not audited)\n")
@@ -163,8 +220,10 @@ def write_md(path: str, R: dict) -> None:
             sid, reason = _skip(s)
             out.append(f"- **{sid}** — {reason or 'no extractable text'}")
     out.append("\n---\n_Grounding (✓ quote verbatim-present) is deterministic; it proves presence, not "
-               "correctness. ⚠ needs review (refuted / unverified / low-confidence). ⛔ dropped (quote not "
-               "in source, or source not loaded). A lawyer signs off._\n")
+               "correctness. ⚠ needs review (refuted / unverified / low-confidence / disputed absence). "
+               "⛔ dropped (quote not in source, or source not loaded). ∅ not returned (extraction failed "
+               "— not evidence of absence). Parsing covers the PDF text layer and DOCX body+tables (not "
+               "footnotes/headers/text boxes). A lawyer signs off._\n")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text("\n".join(out), encoding="utf-8")
 
@@ -201,10 +260,13 @@ def write_docx(path: str, R: dict) -> None:
     leg.add_run("How to read this report. ").bold = True
     leg.add_run("✓ grounded — the quote is present in the source verbatim; this proves the quote is real, "
                 "NOT that the conclusion is correct. ⚠ needs review — the verifier dissented, did not run, "
-                "or the extractor was unsure. ⛔ dropped — the quote was not found in the source (removed), "
-                "or the source text could not be loaded. — not found — the clause is genuinely absent. This "
-                "report augments expert review; a lawyer signs off, and the true error rate is unknown until "
-                "a sample is checked against ground truth.")
+                "the extractor was unsure, or a reported absence was disputed. ⛔ dropped — the quote was "
+                "not found in the source (removed), or the source text could not be loaded. — not found — "
+                "the clause is genuinely absent. ∅ not returned — extraction failed for that cell; re-run "
+                "it (this is not evidence of absence). Parsing covers the text layer of PDFs and the body "
+                "text and tables of DOCX files (not footnotes, headers/footers, or text boxes); page "
+                "numbers refer to the source PDF. This report augments expert review; a lawyer signs off, "
+                "and the true error rate is unknown until a sample is checked against ground truth.")
 
     h = doc.add_heading("Needs human review", level=1)
     h.runs[0].font.color.rgb = RGBColor(0xA2, 0x3B, 0x2E)
@@ -224,7 +286,7 @@ def write_docx(path: str, R: dict) -> None:
             if r.get("quote"):
                 q = doc.add_paragraph()
                 q.paragraph_format.left_indent = Pt(24)
-                qr = q.add_run(f"“{r['quote']}”")
+                qr = q.add_run(f"“{r['quote']}”" + (f"  (p. {r['page']})" if r.get("page") else ""))
                 qr.italic = True
                 qr.font.color.rgb = RGBColor(0x4A, 0x44, 0x3B)
             so = doc.add_paragraph()
@@ -272,7 +334,7 @@ def write_docx(path: str, R: dict) -> None:
             if c.get("quote"):
                 q = doc.add_paragraph()
                 q.paragraph_format.left_indent = Pt(24)
-                qr = q.add_run(f"“{c['quote']}”")
+                qr = q.add_run(f"“{c['quote']}”" + (f"  (p. {c['page']})" if c.get("page") else ""))
                 qr.italic = True
                 qr.font.color.rgb = RGBColor(0x4A, 0x44, 0x3B)
             if c.get("why"):
@@ -287,6 +349,10 @@ def write_docx(path: str, R: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--findings", required=True)
+    ap.add_argument("--manifest", help="audit_prep's manifest.json — the authoritative corpus. Supplies "
+                                       "doc_ids/skipped/fields/pages and HARD-FAILS if the findings name a "
+                                       "different corpus (a stale or cached run), so the check is code, "
+                                       "not an agent's say-so.")
     ap.add_argument("--md", default=".audit/sources", help="dir holding the per-doc <doc_id>.md sources")
     ap.add_argument("--out", help="Markdown report path")
     ap.add_argument("--docx", help="Word report path (for the legal team)")
@@ -295,6 +361,24 @@ def main() -> int:
         ap.error("provide at least one of --out (Markdown) or --docx (Word)")
 
     data = json.loads(Path(args.findings).read_text(encoding="utf-8"))
+    if args.manifest:
+        mpath = Path(args.manifest).expanduser()
+        if not mpath.is_file():
+            ap.error(f"--manifest {args.manifest}: file not found")
+        m = json.loads(mpath.read_text(encoding="utf-8"))
+        if data.get("doc_ids") is not None and sorted(data["doc_ids"]) != sorted(m.get("doc_ids", [])):
+            raise SystemExit(
+                "Corpus mismatch: the findings' doc_ids do not equal the manifest's — these findings are "
+                "for a DIFFERENT corpus (a stale or cached run). Nothing was reported. Re-run the "
+                f"extraction with a fresh scope.\n  findings: {sorted(data['doc_ids'])}\n"
+                f"  manifest: {sorted(m.get('doc_ids', []))}")
+        # The manifest is the corpus authority: the model only transcribes the findings array.
+        data["doc_ids"] = m.get("doc_ids", [])
+        data["skipped"] = m.get("skipped", [])
+        if m.get("fields"):
+            data["fields"] = m["fields"]
+        if m.get("pages"):
+            data["pages"] = m["pages"]
     R = classify(data, args.md)
     # Output may go anywhere the user chose (next to the agreement, ~/Desktop, …) — expand ~.
     out = str(Path(args.out).expanduser()) if args.out else None
@@ -306,6 +390,7 @@ def main() -> int:
     c, n_cells = R["counts"], len(R["doc_ids"]) * len(R["fields"])
     print(f"{len(R['doc_ids'])} docs · {n_cells} checks · {c['answer']} grounded · {c['review']} review · "
           f"{c['ungrounded'] + c['no_source']} dropped · {c['not_found']} not found"
+          + (f" · {c['missing']} not returned" if c.get("missing") else "")
           + (f" · {R['malformed']} malformed ignored" if R["malformed"] else "")
           + (f"  -> {out}" if out else "") + (f"  -> {docx}" if docx else ""))
     return 0

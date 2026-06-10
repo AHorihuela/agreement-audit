@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import glob as _glob
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -43,12 +44,15 @@ def safe_doc_id(stem: str) -> str:
     return s or "document"
 
 
-def extract_text(path: Path) -> str:
-    """Best-effort text extraction. Returns "" if the file has no extractable text (e.g. a scanned PDF
-    needing OCR) — the caller records that as a reasoned skip, never a silent empty."""
+def extract_text(path: Path) -> tuple:
+    """Best-effort text extraction -> (text, page_starts). Returns text "" if the file has no
+    extractable text (e.g. a scanned PDF needing OCR) — the caller records that as a reasoned skip,
+    never a silent empty. For PDFs, `page_starts` is the character offset (in the returned text) where
+    each page begins, so the report can turn a grounded quote's offset into a page number a reviewer
+    can open directly; None for formats without page structure."""
     ext = path.suffix.lower()
     if ext in (".md", ".txt"):
-        return path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace"), None
     if ext == ".docx":
         from docx import Document
         d = Document(str(path))
@@ -58,12 +62,17 @@ def extract_text(path: Path) -> str:
                 cells = [c.text.strip() for c in row.cells]
                 if any(cells):
                     parts.append(" | ".join(cells))
-        return "\n".join(parts)
+        return "\n".join(parts), None
     if ext == ".pdf":
         import fitz  # PyMuPDF
         with fitz.open(str(path)) as doc:
-            return "\n".join(page.get_text() for page in doc)
-    return ""
+            pages = [page.get_text() for page in doc]
+        starts, pos = [], 0
+        for t in pages:
+            starts.append(pos)
+            pos += len(t) + 1                             # +1 for the "\n" join below
+        return "\n".join(pages), starts
+    return "", None
 
 
 def select_files(docs_dir, files) -> list:
@@ -124,13 +133,23 @@ def main() -> int:
     explicit = bool(files_cfg) or has_glob or dd.is_file() or (bool(dd.suffix) and not dd.is_dir())
 
     # Per-doc sources live in their own subdir, wiped each run, so a stale source from a PRIOR run can
-    # never be grounded against (and can't collide with the report file).
+    # never be grounded against (and can't collide with the report file). The prior run's findings.json
+    # goes too: if the new run's extraction step fails, consolidating must fail loudly — not silently
+    # report the previous corpus's findings as this run's.
     src_dir = Path(args.out) / "sources"
     src_dir.mkdir(parents=True, exist_ok=True)
     for stale in src_dir.glob("*.md"):
         stale.unlink()
+    stale_findings = Path(args.out) / "findings.json"
+    if stale_findings.exists():
+        stale_findings.unlink()
 
-    doc_ids, skipped, seen = [], [], {}
+    # Content fingerprint: the parsed TEXT (+ the questions asked), not just the file list. The skill
+    # folds this into the workflow's `scope` arg, so re-auditing after EDITING a document (same names,
+    # same fields) still busts the framework's prompt-hash result cache.
+    hasher = hashlib.sha256(json.dumps(fields, sort_keys=True).encode("utf-8"))
+
+    doc_ids, skipped, pages, seen = [], [], {}, {}
     for path in candidates:
         if path.is_dir():                                # a directory handed to the `files` list
             skipped.append({"doc_id": path.name, "reason": "is a directory — pass it as the folder, "
@@ -157,16 +176,29 @@ def main() -> int:
                              f"each other and under-count coverage.")
         seen[doc_id] = path
         try:
-            text = extract_text(path).strip()
-            reason = "" if text else "no extractable text (likely scanned/encrypted — needs OCR)"
+            text, page_starts = extract_text(path)
+            if text.strip():
+                reason = ""
+            elif path.suffix.lower() == ".pdf":
+                reason = ("no extractable text (likely scanned/encrypted — needs OCR; try: "
+                          f"ocrmypdf '{path.name}' '{path.stem}-ocr.pdf', then re-run on that file)")
+            else:
+                reason = "no extractable text"
         except Exception as e:                               # a real parse failure, not a scanned doc
-            text, reason = "", f"parse error: {type(e).__name__}: {e}"
-        if not text:                                         # record WHY, never a silent vanish
+            text, page_starts, reason = "", None, f"parse error: {type(e).__name__}: {e}"
+        if not text.strip():                                 # record WHY, never a silent vanish
             skipped.append({"doc_id": doc_id, "reason": reason})
             continue
+        # Written UNSTRIPPED so page_starts offsets remain valid against the file as grounded.
         (src_dir / f"{doc_id}.md").write_text(text, encoding="utf-8")
+        if page_starts:
+            pages[doc_id] = page_starts
+        hasher.update(doc_id.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(text.encode("utf-8"))
         doc_ids.append(doc_id)
-    manifest = {"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "sources": str(src_dir)}
+    manifest = {"doc_ids": doc_ids, "skipped": skipped, "fields": fields, "sources": str(src_dir),
+                "pages": pages, "content_hash": hasher.hexdigest()[:16]}
     # Persist the manifest so the (script-free) workflow can read scope from it, and the skill can
     # reuse it to assemble findings.json — one source of truth, no reliance on the workflow `args`.
     (Path(args.out) / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

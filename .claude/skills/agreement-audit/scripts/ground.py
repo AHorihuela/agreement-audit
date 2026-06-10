@@ -28,16 +28,31 @@ class GroundingResult:
     char_end: Optional[int] = None
 
 
+# Typographic folds for the normalized fallback. Each is presentation noise PDF/DOCX extraction
+# leaves behind, never a semantic change — unlike NFKC, which would also fold fractions/superscripts.
+_FOLDS = str.maketrans({
+    "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',          # curly quotes
+    "\u2013": "-", "\u2014": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-",  # dashes, minus sign
+    "\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl",
+    "\ufb05": "ft", "\ufb06": "st",                                    # ligatures
+    "\u00ad": None,                                # soft hyphen (an invisible line-break hint)
+    "\u200b": None, "\u200c": None, "\u200d": None,  # zero-width space / non-joiner / joiner
+    "\ufeff": None, "\u2060": None,                   # BOM, word joiner
+})
+
+
 def _normalize(text: str) -> str:
-    """Forgiving normalization for the fallback check only: collapse whitespace, unify quotes/dashes.
-    NFC (not NFKC) so ligatures/fractions aren't silently folded; case is PRESERVED (a verbatim legal
-    quote that differs only in case is not the same text). Catches reflow/typography, not paraphrase."""
+    """Forgiving normalization for the fallback check only: collapse whitespace, fold typography
+    (quotes/dashes/ligatures/invisible characters), and re-join words hyphenated at a line break.
+    NFC (not NFKC) so fractions/superscripts aren't silently folded; case is PRESERVED (a verbatim
+    legal quote that differs only in case is not the same text). Catches reflow/typography artifacts
+    of PDF/DOCX extraction, not paraphrase."""
     text = unicodedata.normalize("NFC", text)
-    text = (text
-            .replace("‘", "'").replace("’", "'")
-            .replace("“", '"').replace("”", '"')
-            .replace("–", "-").replace("—", "-")
-            .replace(" ", " "))
+    text = text.translate(_FOLDS)
+    # End-of-line hyphenation: "termi-\nnation" -> "termination". Only a hyphen BEFORE a linebreak
+    # is folded — a real hyphenated compound ("non-compete") has no newline and stays intact. Must
+    # run before the whitespace collapse below, which would erase the newline that marks the case.
+    text = re.sub(r"(?<=\w)-[ \t]*\n\s*(?=\w)", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
